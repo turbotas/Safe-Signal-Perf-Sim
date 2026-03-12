@@ -1,0 +1,3 @@
+@echo off
+echo [INFO] Serving Safe Signal Performance Simulator on port 8082...
+python -m http.server 8082
