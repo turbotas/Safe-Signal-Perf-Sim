@@ -24,9 +24,23 @@ const ui = {
 let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [], timeouts: [], createdCases: [] };
 let isAuthenticated = false;
 const clusters = [
-  { lat: 51.5074, lon: -0.1278 }, { lat: 55.9533, lon: -3.1883 }, { lat: 53.3498, lon: -6.2603 },
-  { lat: 52.4862, lon: -1.8904 }, { lat: 51.4816, lon: -3.1791 }, { lat: 53.4839, lon: -2.2446 },
-  { lat: 54.5973, lon: -5.9301 }, { lat: 51.8985, lon: -8.4756 }
+  { latitude: 51.5074, longitude: -0.1278, name: 'London' },
+  { latitude: 53.4808, longitude: -2.2426, name: 'Manchester' },
+  { latitude: 52.4862, longitude: -1.8904, name: 'Birmingham' },
+  { latitude: 55.9533, longitude: -3.1883, name: 'Edinburgh' },
+  { latitude: 53.3498, longitude: -6.2603, name: 'Dublin' },
+  { latitude: 51.4545, longitude: -2.5879, name: 'Bristol' },
+  { latitude: 51.4816, longitude: -3.1791, name: 'Cardiff' },
+  { latitude: 53.4084, longitude: -2.9916, name: 'Liverpool' },
+  { latitude: 52.9225, longitude: -1.4767, name: 'Nottingham' },
+  { latitude: 50.8225, longitude: -0.1372, name: 'Brighton' },
+  { latitude: 55.8642, longitude: -4.2518, name: 'Glasgow' },
+  { latitude: 54.5973, longitude: -5.9301, name: 'Belfast' },
+  { latitude: 51.7520, longitude: -1.2577, name: 'Oxford' },
+  { latitude: 51.3811, longitude: -2.3590, name: 'Bath' },
+  { latitude: 51.5154, longitude: -0.0922, name: 'Islington' },
+  { latitude: 53.8008, longitude: -1.5491, name: 'Sheffield' },
+  { latitude: 52.2280, longitude: 0.1218, name: 'Cambridge' }
 ];
 const names = ['Jamie','Morgan','Alex','Taylor','Jordan','Cameron','Casey'];
 const surnames = ['Reed','Morgan','Bryan','Stewart','Doyle','Lennon'];
@@ -34,19 +48,32 @@ const osTypes = ['Android','Apple'];
 const getRandom = (arr) => arr[Math.floor(Math.random()*arr.length)];
 const jitter = (value, delta) => value + (Math.random()-0.5)*delta;
 const randomPhone = () => `07${Math.floor(10000000 + Math.random()*89999999)}`;
+const citySpread = 0.06;
 const move = (base) => {
-  const distance = Math.random()*0.02;
+  const distance = Math.random()*citySpread;
   const angle = Math.random()*Math.PI*2;
-  return { latitude: base.lat + Math.cos(angle)*distance, longitude: base.lon + Math.sin(angle)*distance };
+  return {
+    latitude: base.latitude + Math.cos(angle)*distance,
+    longitude: base.longitude + Math.sin(angle)*distance
+  };
 };
 const updateStats = () => {
   ui.stats.total.textContent = simState.stats.total;
   ui.stats.active.textContent = simState.stats.active;
   ui.stats.errors.textContent = simState.stats.errors;
 };
-const setLight = (device, state) => {
+const setLightState = (device, state) => {
+  if (!device.el) return;
   device.el.classList.remove('idle','normal','active');
   device.el.classList.add(state);
+};
+const flashLight = (device) => {
+  if (!device.el) return;
+  clearTimeout(device.flashTimer);
+  device.el.classList.add('flash');
+  device.flashTimer = setTimeout(() => {
+    device.el?.classList.remove('flash');
+  }, 2000);
 };
 const createGrid = () => {
   ui.grid.innerHTML = '';
@@ -57,6 +84,7 @@ const createGrid = () => {
     el.textContent = d.deviceId.slice(-2);
     ui.grid.appendChild(el);
     d.el = el;
+    setLightState(d, 'idle');
   });
 };
 const simulateUpdate = async (device, active) => {
@@ -72,10 +100,12 @@ const simulateUpdate = async (device, active) => {
       activation: active ? 1 : 0
     })});
     device.updates += 1;
-    setLight(device, active ? 'active' : 'normal');
+    setLightState(device, active ? 'active' : 'normal');
+    flashLight(device);
   } catch (err) {
     simState.stats.errors += 1;
-    setLight(device, 'idle');
+    setLightState(device, 'idle');
+    flashLight(device);
   }
   updateStats();
 };
