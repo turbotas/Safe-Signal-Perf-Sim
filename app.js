@@ -21,7 +21,7 @@ const ui = {
     errors: document.getElementById('stat-errors')
   }
 };
-let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [] };
+let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [], timeouts: [], createdCases: [] };
 let isAuthenticated = false;
 const clusters = [
   { lat: 51.5074, lon: -0.1278 }, { lat: 55.9533, lon: -3.1883 }, { lat: 53.3498, lon: -6.2603 },
@@ -79,9 +79,18 @@ const simulateUpdate = async (device, active) => {
   }
   updateStats();
 };
+const getRandomInterval = () => {
+  const min = Number.isFinite(config.updateMinMs) ? config.updateMinMs : 0;
+  const max = Number.isFinite(config.updateMaxMs) ? config.updateMaxMs : min;
+  const range = Math.max(0, max - min);
+  return min + Math.random()*range;
+};
+
 const schedule = (device, next, active=false) => {
   if (!simState.running) return;
-  setTimeout(async () => {
+  const delay = Number.isFinite(next) ? next : 1000;
+  const timer = setTimeout(async () => {
+    if (!simState.running) return;
     device.location = move(device.base);
     await simulateUpdate(device, active);
     if (active) {
@@ -90,15 +99,18 @@ const schedule = (device, next, active=false) => {
       setTimeout(() => {
         simState.stats.active -= 1;
         updateStats();
-        schedule(device, Math.random()*config.updateIntervalMs + config.updateIntervalMs, false);
+        schedule(device, getRandomInterval(), false);
       }, config.activeDurationMs);
     } else {
-      schedule(device, Math.random()*config.updateIntervalMs + config.updateIntervalMs, device.active);
+      const shouldActivate = Math.random() < config.activationChance;
+      const nextDelay = shouldActivate ? config.activationIntervalMs : getRandomInterval();
+      schedule(device, nextDelay, shouldActivate);
     }
-  }, next);
+  }, delay);
+  simState.timeouts.push(timer);
 };
 let config = {};
-const createCasePayload = (organisation_id) => ({
+const createCasePayload = (organisation_id, deviceId) => ({
   registered_user: `${getRandom(names)} ${getRandom(surnames)}`,
   gender: getRandom(['Female','Male']),
   risk_level: getRandom(['High','Medium','Low']),
@@ -109,21 +121,36 @@ const createCasePayload = (organisation_id) => ({
   os_type: getRandom(osTypes),
   status: 'Open',
   language_code: 'en-GB'
+  , device: deviceId
   , organisation_id
 });
 
 const buildDevices = async () => {
   simState.devices = [];
+  simState.createdCases = [];
+  simState.timeouts = [];
   for (let i=0;i<config.deviceCount;i++) {
     const cluster = getRandom(clusters);
     const location = move(cluster);
-    const org = getRandom(simState.organisations) || null;
-    const payload = createCasePayload(org?.id ?? undefined);
-    const created = await apiFetch('/api/cases', { method: 'POST', body: JSON.stringify(payload) });
-    const enroll = await apiFetch('/api/devices/enroll', { method: 'POST', body: JSON.stringify({ device_id: randomPhone(), pin: created.activation_code }) });
+    const org = getRandom(simState.organisations);
+    const organisationId = org ? org.id : undefined;
+    const deviceId = randomPhone();
+    const payload = createCasePayload(organisationId, deviceId);
+    let created;
+    try {
+      created = await apiFetch('/api/cases', { method: 'POST', body: JSON.stringify(payload) });
+    } catch (caseErr) {
+      console.error('Case creation failed', caseErr, payload);
+      throw caseErr;
+    }
+    const activationCode = created.activation_code ?? created.case?.activation_code;
+    if (!activationCode) throw new Error('Activation code missing from case response');
+    const enroll = await apiFetch('/api/devices/enroll', { method: 'POST', body: JSON.stringify({ device_id: deviceId, pin: activationCode }) });
+    const caseId = created.case?.id ?? created.id;
+    if (caseId) simState.createdCases.push(caseId);
     const device = {
-      caseId: created.id,
-      deviceId: enroll.device_id,
+      caseId,
+      deviceId,
       apiKey: enroll.api_key,
       location,
       base: cluster,
@@ -133,22 +160,92 @@ const buildDevices = async () => {
     simState.devices.push(device);
   }
 };
+const startDeviceLoops = () => {
+  const initialDelayMs = 500;
+  simState.devices.forEach((device) => schedule(device, initialDelayMs, false));
+};
+
+const clearTimers = () => {
+  simState.timeouts.forEach(clearTimeout);
+  simState.timeouts = [];
+};
+
+const teardownCases = async () => {
+  if (!simState.createdCases.length) return;
+  const cases = Array.from(new Set(simState.createdCases));
+  for (const caseId of cases) {
+    try {
+      if (config.teardownMode === 'delete') {
+        await apiFetch(`/api/cases/${caseId}`, { method: 'DELETE' });
+      } else {
+        await apiFetch(`/api/cases/${caseId}`, { method: 'PATCH', body: JSON.stringify({ status: 'Archived', enrollment: 0 }) });
+      }
+    } catch (err) {
+      console.error(`Teardown failed for case ${caseId}`, err);
+    }
+  }
+  simState.createdCases = [];
+};
+
+const stopSimulation = async () => {
+  if (!simState.running) return;
+  simState.running = false;
+  clearTimers();
+  ui.loginStatus.textContent = 'Stopping simulation...';
+  try {
+    await teardownCases();
+    ui.loginStatus.textContent = 'Simulation stopped';
+  } catch (err) {
+    console.error('Teardown failed', err);
+    ui.loginStatus.textContent = 'Simulation stopped (teardown errors logged)';
+  }
+  ui.start.disabled = false;
+  ui.stop.disabled = true;
+};
+
 const startSimulation = async () => {
   if (!isAuthenticated) {
     alert('Please authenticate before starting the simulation.');
     return;
   }
   if (simState.running) return;
+  clearTimers();
+  const minMinutesInput = parseInt(document.getElementById('update-min').value,10);
+  const maxMinutesInput = parseInt(document.getElementById('update-max').value,10);
+  const minMinutes = Number.isFinite(minMinutesInput) ? minMinutesInput : 30;
+  const maxMinutes = Math.max(minMinutes, Number.isFinite(maxMinutesInput) ? maxMinutesInput : 60);
+  const minMs = minMinutes * 60 * 1000;
+  const maxMs = maxMinutes * 60 * 1000;
+  const activeRatio = Math.max(0, Math.min(1, (parseFloat(document.getElementById('active-ratio').value) || 3) / 100));
+  const activeIntervalMs = Math.max(1000, (parseInt(document.getElementById('active-interval').value,10) || 30) * 1000);
+  const activeDurationMs = Math.max(1000, (parseInt(document.getElementById('active-duration').value,10) || 15) * 60 * 1000);
+  const teardownMode = document.getElementById('teardown-mode').value || 'archive';
   config = {
     deviceCount: parseInt(document.getElementById('device-count').value,10) || 200,
-    updateIntervalMs: (parseInt(document.getElementById('update-max').value,10) || 60) * 60 * 1000,
-    activeDurationMs: (parseInt(document.getElementById('active-duration').value,10) || 15) * 60 * 1000
+    updateMinMs: minMs,
+    updateMaxMs: maxMs,
+    activationChance: activeRatio,
+    activationIntervalMs: activeIntervalMs,
+    activeDurationMs,
+    teardownMode
   };
   simState.running = true;
   simState.stats = { total: config.deviceCount, active:0, errors:0 };
-  await buildDevices();
-  createGrid();
-  updateStats();
+  try {
+    await buildDevices();
+    createGrid();
+    updateStats();
+    startDeviceLoops();
+    ui.loginStatus.textContent = `Simulation running (${simState.stats.total} devices)`;
+    ui.start.disabled = true;
+    ui.stop.disabled = false;
+  } catch (err) {
+    console.error('Simulation failed to start', err);
+    simState.running = false;
+    ui.loginStatus.textContent = `Simulator error: ${err.message}`;
+    ui.start.disabled = false;
+    ui.stop.disabled = true;
+  }
 };
 ui.loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -158,15 +255,30 @@ ui.loginForm.addEventListener('submit', async (event) => {
     ui.loginStatus.textContent = 'Authenticated';
     isAuthenticated = true;
     ui.start.disabled = false;
+    let orgResponse = [];
+    try {
+      const list = await apiFetch('/api/organisations?limit=1000');
+      orgResponse = list.items || [];
+    } catch (err) {
+      console.error('Failed to load organizations', err);
+    }
+    simState.organisations = orgResponse;
     if (!simState.organisations.length) {
-      try {
-        simState.organisations = await apiFetch('/api/organisations?limit=1000');
-      } catch (err) {
-        console.error('Failed to load organizations', err);
+      const current = await apiFetch('/api/auth/me');
+      if (current.organisation_id) {
+        simState.organisations = [{ id: current.organisation_id, name: 'Default Org' }];
       }
+    }
+    if (!simState.organisations.length) {
+      ui.loginStatus.textContent = 'No accessible organisations';
+      isAuthenticated = false;
+      ui.start.disabled = true;
     }
   } catch (err) {
     ui.loginStatus.textContent = 'Login failed';
   }
 });
 ui.start.addEventListener('click', startSimulation);
+ui.stop.addEventListener('click', () => {
+  stopSimulation();
+});
