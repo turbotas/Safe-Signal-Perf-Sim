@@ -21,7 +21,7 @@ const ui = {
     errors: document.getElementById('stat-errors')
   }
 };
-let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 } };
+let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [] };
 let isAuthenticated = false;
 const clusters = [
   { lat: 51.5074, lon: -0.1278 }, { lat: 55.9533, lon: -3.1883 }, { lat: 53.3498, lon: -6.2603 },
@@ -98,13 +98,18 @@ const schedule = (device, next, active=false) => {
   }, next);
 };
 let config = {};
-const createCasePayload = () => ({
+const createCasePayload = (organisation_id) => ({
   registered_user: `${getRandom(names)} ${getRandom(surnames)}`,
-  os_type: getRandom(osTypes),
+  gender: getRandom(['Female','Male']),
   risk_level: getRandom(['High','Medium','Low']),
+  local_reference: `Perf-${Math.floor(Math.random()*100000)}`,
+  officer_name: 'System Perf',
+  officer_staff_id: 'PERF01',
+  map_label: 'PerfSim',
+  os_type: getRandom(osTypes),
   status: 'Open',
-  language_code: 'en-GB',
-  map_label: 'PerfSim'
+  language_code: 'en-GB'
+  , organisation_id
 });
 
 const buildDevices = async () => {
@@ -112,7 +117,8 @@ const buildDevices = async () => {
   for (let i=0;i<config.deviceCount;i++) {
     const cluster = getRandom(clusters);
     const location = move(cluster);
-    const payload = createCasePayload();
+    const org = getRandom(simState.organisations) || null;
+    const payload = createCasePayload(org?.id ?? undefined);
     const created = await apiFetch('/api/cases', { method: 'POST', body: JSON.stringify(payload) });
     const enroll = await apiFetch('/api/devices/enroll', { method: 'POST', body: JSON.stringify({ device_id: randomPhone(), pin: created.activation_code }) });
     const device = {
@@ -152,6 +158,13 @@ ui.loginForm.addEventListener('submit', async (event) => {
     ui.loginStatus.textContent = 'Authenticated';
     isAuthenticated = true;
     ui.start.disabled = false;
+    if (!simState.organisations.length) {
+      try {
+        simState.organisations = await apiFetch('/api/organisations?limit=1000');
+      } catch (err) {
+        console.error('Failed to load organizations', err);
+      }
+    }
   } catch (err) {
     ui.loginStatus.textContent = 'Login failed';
   }
