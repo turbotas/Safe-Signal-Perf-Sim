@@ -1,5 +1,10 @@
+const BASE_URL = 'http://localhost:8000';
 const apiFetch = async (path, options = {}) => {
-  const response = await fetch(`http://localhost:8000${path}`, { ...options, credentials: 'include', headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }});
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...options,
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+  });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   if (response.status === 204) return null;
   return response.json();
@@ -17,6 +22,7 @@ const ui = {
   }
 };
 let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 } };
+let isAuthenticated = false;
 const clusters = [
   { lat: 51.5074, lon: -0.1278 }, { lat: 55.9533, lon: -3.1883 }, { lat: 53.3498, lon: -6.2603 },
   { lat: 52.4862, lon: -1.8904 }, { lat: 51.4816, lon: -3.1791 }, { lat: 53.4839, lon: -2.2446 },
@@ -92,15 +98,27 @@ const schedule = (device, next, active=false) => {
   }, next);
 };
 let config = {};
+const createCasePayload = () => ({
+  registered_user: `${getRandom(names)} ${getRandom(surnames)}`,
+  os_type: getRandom(osTypes),
+  risk_level: getRandom(['High','Medium','Low']),
+  status: 'Open',
+  language_code: 'en-GB',
+  map_label: 'PerfSim'
+});
+
 const buildDevices = async () => {
   simState.devices = [];
   for (let i=0;i<config.deviceCount;i++) {
     const cluster = getRandom(clusters);
     const location = move(cluster);
+    const payload = createCasePayload();
+    const created = await apiFetch('/api/cases', { method: 'POST', body: JSON.stringify(payload) });
+    const enroll = await apiFetch('/api/devices/enroll', { method: 'POST', body: JSON.stringify({ device_id: randomPhone(), pin: created.activation_code }) });
     const device = {
-      caseId: null,
-      deviceId: randomPhone(),
-      apiKey: null,
+      caseId: created.id,
+      deviceId: enroll.device_id,
+      apiKey: enroll.api_key,
       location,
       base: cluster,
       updates: 0,
@@ -110,6 +128,10 @@ const buildDevices = async () => {
   }
 };
 const startSimulation = async () => {
+  if (!isAuthenticated) {
+    alert('Please authenticate before starting the simulation.');
+    return;
+  }
   if (simState.running) return;
   config = {
     deviceCount: parseInt(document.getElementById('device-count').value,10) || 200,
@@ -128,6 +150,8 @@ ui.loginForm.addEventListener('submit', async (event) => {
   try {
     await apiFetch('/api/auth/login', { method: 'POST', body: JSON.stringify(body) });
     ui.loginStatus.textContent = 'Authenticated';
+    isAuthenticated = true;
+    ui.start.disabled = false;
   } catch (err) {
     ui.loginStatus.textContent = 'Login failed';
   }
