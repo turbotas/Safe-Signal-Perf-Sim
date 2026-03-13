@@ -17,6 +17,8 @@ button { cursor: pointer; }
 .secondary { background: #1d4ed8; }
 .panel header { display: flex; align-items: center; justify-content: space-between; }
 .stats { display: flex; gap: 1rem; font-size: 0.85rem; }
+.error-log { max-height: 200px; overflow: auto; font-size: 0.75rem; background: #0f172a; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.5rem; }
+.error-log p { margin: 0 0 0.25rem; }
 .device-grid-wrapper { margin-top: 0.8rem; padding-top: 0.2rem; }
 #device-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(20px, 1fr)); gap: 1px; max-height: 90vh; overflow: auto; width: 100%; padding-top: 0.4rem; }
 .device-cell { width: 100%; min-height: 20px; border-radius: 4px; background: #090c17; border: 0.7px solid rgba(255,255,255,0.1); display: flex; align-items: center; justify-content: center; position: relative; font-size: 0.55rem; }

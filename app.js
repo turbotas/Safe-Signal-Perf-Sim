@@ -35,7 +35,7 @@ const lastNames = ['O’Brien','Murphy','Kelly','McCarthy','Walsh','Byrne','Sull
 const officerNames = ['Sergeant Hynes','DS Murray','Inspector Stratton','PC Avery','Lieutenant Fisher','Supt. Blake'];
 const mapLabels = ['PerfSim','SafeSignal','Control','OpsBeat'];
 const languages = ['en-GB','cy-GB','gd-GB','ga-IE'];
-let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [], timeouts: [], createdCases: [], failedTeardowns: [] };
+let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [], timeouts: [], createdCases: [], failedTeardowns: [], errorLog: [] };
 let isAuthenticated = false;
 const clusters = [
   { latitude: 51.5074, longitude: -0.1278, name: 'London' },
@@ -124,6 +124,25 @@ const updateStats = () => {
   ui.stats.active.textContent = simState.stats.active;
   ui.stats.errors.textContent = simState.stats.errors;
 };
+
+const updateErrorLog = () => {
+  if (!errorLogEl) return;
+  errorLogEl.innerHTML = '';
+  simState.errorLog.forEach((entry) => {
+    const line = document.createElement('p');
+    line.textContent = entry;
+    errorLogEl.appendChild(line);
+  });
+};
+
+const logSimulatorError = (msg) => {
+  const entry = `${new Date().toLocaleTimeString()} - ${msg}`;
+  simState.errorLog.unshift(entry);
+  if (simState.errorLog.length > 30) {
+    simState.errorLog.pop();
+  }
+  updateErrorLog();
+};
 const setLightState = (device, state) => {
   if (!device.el) return;
   device.el.classList.remove('idle','normal','active');
@@ -164,11 +183,12 @@ const simulateUpdate = async (device, active) => {
     device.updates += 1;
     setLightState(device, active ? 'active' : 'normal');
     flashLight(device);
-  } catch (err) {
-    simState.stats.errors += 1;
-    setLightState(device, 'idle');
-    flashLight(device);
-  }
+    } catch (err) {
+      simState.stats.errors += 1;
+      setLightState(device, 'idle');
+      flashLight(device);
+      logSimulatorError(`Device ${device.deviceId}: ${err.message}`);
+    }
   updateStats();
 };
 const getRandomInterval = () => {
@@ -342,6 +362,7 @@ const updateRetryButtonState = () => {
     ui.retryTeardown.disabled = !simState.failedTeardowns.length;
   }
 };
+const errorLogEl = document.getElementById('error-log');
 
 const executeTeardownForCase = async (caseId) => {
   if (config.teardownMode === 'delete') {
@@ -427,6 +448,8 @@ const startSimulation = async () => {
   };
   simState.running = true;
   simState.stats = { total: config.deviceCount, active:0, errors:0 };
+  simState.errorLog = [];
+  updateErrorLog();
   try {
     await buildDevices();
     createGrid();
