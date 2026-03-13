@@ -202,6 +202,36 @@ const schedule = (device, next, active=false) => {
 };
 let config = {};
 const riskLevels = ['High','Medium','Low'];
+const riskCategoryIds = [1,2,3,4,5];
+const disabilityIds = [1,2,3,4];
+const warningMarkerIds = [1,2,3,4,5,6];
+const streets = ['Harper Lane','Marlow Road','Beacon Crescent','Harrow Way','Larkspur Drive','Ridgewell Avenue','Keeley Street'];
+const towns = ['Kilburn','Shankill','Greystones','Lisburn','Kingstanding','Belfast','Galway','Cork','Limerick','Brighton','Slough'];
+const vehicleMakes = ['Toyota','Ford','BMW','Audi','Vauxhall','Nissan'];
+const vehicleColors = ['Blue','Black','Silver','Red','White','Green'];
+const vehicleModels = ['Focus','Fiesta','Astra','Camry','i30','Civic'];
+const randomSubset = (items) => items.filter(() => Math.random() < 0.4);
+const randomSpreadPick = (items) => items[Math.floor(Math.random() * items.length)];
+const randomAddresses = (targetType) => {
+  const count = Math.ceil(Math.random()*2);
+  return Array.from({length: count}, () => ({
+    target_type: targetType,
+    label: `${targetType} Address`,
+    address_line1: `${Math.floor(Math.random()*200)} ${randomSpreadPick(streets)}`,
+    city: randomSpreadPick(towns),
+    postcode: `${Math.floor(10 + Math.random()*90)}SW${Math.floor(1 + Math.random()*9)}`
+  }));
+};
+const randomVehicles = (targetType) => {
+  const count = Math.floor(Math.random()*3);
+  return Array.from({length: count}, () => ({
+    target_type: targetType,
+    make: randomSpreadPick(vehicleMakes),
+    model: randomSpreadPick(vehicleModels),
+    color: randomSpreadPick(vehicleColors),
+    vrm: `${String.fromCharCode(65 + Math.floor(Math.random()*26))}${Math.floor(10 + Math.random()*90)}${String.fromCharCode(65 + Math.floor(Math.random()*26))}`
+  }));
+};
 const createCasePayload = (organisation_id, deviceId) => {
   const gender = pickGender();
   const firstName = pickName(gender);
@@ -222,6 +252,8 @@ const createCasePayload = (organisation_id, deviceId) => {
     status: 'Open',
     language_code: getRandom(languages),
     review_date,
+    risk_category_ids: randomSubset(riskCategoryIds),
+    disability_ids: randomSubset(disabilityIds),
     device: deviceId,
     organisation_id
   };
@@ -232,7 +264,13 @@ const createCasePayload = (organisation_id, deviceId) => {
     payload.perp_dob = randomDob();
     payload.perp_pnd_id = `PND-${Math.floor(100000 + Math.random()*899999)}`;
     payload.perp_court_order = `Bail Order ${Math.floor(Math.random()*900)+100}`;
+    payload.warning_marker_ids = randomSubset(warningMarkerIds);
+    payload.perp_addresses = randomAddresses('perp');
+    payload.perp_vehicles = randomVehicles('perp');
   }
+  payload.user_addresses = randomAddresses('user');
+  payload.user_vehicles = randomVehicles('user');
+  if (!payload.warning_marker_ids) payload.warning_marker_ids = randomSubset(warningMarkerIds);
   return payload;
 };
 
