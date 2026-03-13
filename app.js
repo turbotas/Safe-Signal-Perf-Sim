@@ -345,6 +345,9 @@ const buildDevices = async () => {
       activeBurstEnd: 0
     };
     simState.devices.push(device);
+    if (config.caseDelayMs > 0) {
+      await sleep(config.caseDelayMs);
+    }
   }
 };
 const startDeviceLoops = () => {
@@ -356,6 +359,8 @@ const clearTimers = () => {
   simState.timeouts.forEach(clearTimeout);
   simState.timeouts = [];
 };
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const updateRetryButtonState = () => {
   if (ui.retryTeardown) {
@@ -437,6 +442,7 @@ const startSimulation = async () => {
   const activeIntervalMs = Math.max(1000, (parseInt(document.getElementById('active-interval').value,10) || 30) * 1000);
   const activeDurationMs = Math.max(1000, (parseInt(document.getElementById('active-duration').value,10) || 15) * 60 * 1000);
   const teardownMode = document.getElementById('teardown-mode').value || 'archive';
+  const caseDelayMs = Math.max(0, parseInt(document.getElementById('case-delay').value,10) || 0);
   config = {
     deviceCount: parseInt(document.getElementById('device-count').value,10) || 200,
     updateMinMs: minMs,
@@ -444,7 +450,8 @@ const startSimulation = async () => {
     activationChance: activeRatio,
     activeIntervalMs: activeIntervalMs,
     activeDurationMs,
-    teardownMode
+    teardownMode,
+    caseDelayMs
   };
   simState.running = true;
   simState.stats = { total: config.deviceCount, active:0, errors:0 };

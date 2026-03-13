@@ -17,6 +17,7 @@ button { cursor: pointer; }
 .secondary { background: #1d4ed8; }
 .panel header { display: flex; align-items: center; justify-content: space-between; }
 .stats { display: flex; gap: 1rem; font-size: 0.85rem; }
+.muted { color: #cbd5f5; font-size: 0.75rem; margin: 0; }
 .error-log { max-height: 200px; overflow: auto; font-size: 0.75rem; background: #0f172a; border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 0.5rem; }
 .error-log p { margin: 0 0 0.25rem; }
 .device-grid-wrapper { margin-top: 0.8rem; padding-top: 0.2rem; }
