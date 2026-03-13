@@ -421,7 +421,7 @@ const startSimulation = async () => {
     updateMinMs: minMs,
     updateMaxMs: maxMs,
     activationChance: activeRatio,
-    activationIntervalMs: activeIntervalMs,
+    activeIntervalMs: activeIntervalMs,
     activeDurationMs,
     teardownMode
   };
