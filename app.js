@@ -40,7 +40,10 @@ const clusters = [
   { latitude: 51.3811, longitude: -2.3590, name: 'Bath' },
   { latitude: 51.5154, longitude: -0.0922, name: 'Islington' },
   { latitude: 53.8008, longitude: -1.5491, name: 'Sheffield' },
-  { latitude: 52.2280, longitude: 0.1218, name: 'Cambridge' }
+  { latitude: 52.2280, longitude: 0.1218, name: 'Cambridge' },
+  { latitude: 57.1497, longitude: -2.0943, name: 'Aberdeen' },
+  { latitude: 54.5682, longitude: -1.2348, name: 'Newcastle' },
+  { latitude: 51.8979, longitude: -3.1695, name: 'Cardiff' }
 ];
 const names = ['Jamie','Morgan','Alex','Taylor','Jordan','Cameron','Casey'];
 const surnames = ['Reed','Morgan','Bryan','Stewart','Doyle','Lennon'];
@@ -57,6 +60,13 @@ const move = (base) => {
     longitude: base.longitude + Math.sin(angle)*distance
   };
 };
+
+const randomRegionBase = () => ({
+  latitude: 50 + Math.random()*8,
+  longitude: -7 + Math.random()*8
+});
+
+const sampleBaseLocation = () => Math.random() < 0.7 ? { ...getRandom(clusters) } : randomRegionBase();
 const updateStats = () => {
   ui.stats.total.textContent = simState.stats.total;
   ui.stats.active.textContent = simState.stats.active;
@@ -160,8 +170,8 @@ const buildDevices = async () => {
   simState.createdCases = [];
   simState.timeouts = [];
   for (let i=0;i<config.deviceCount;i++) {
-    const cluster = getRandom(clusters);
-    const location = move(cluster);
+    const base = sampleBaseLocation();
+    const location = move(base);
     const org = getRandom(simState.organisations);
     const organisationId = org ? org.id : undefined;
     const deviceId = randomPhone();
@@ -183,7 +193,7 @@ const buildDevices = async () => {
       deviceId,
       apiKey: enroll.api_key,
       location,
-      base: cluster,
+      base,
       updates: 0,
       active: false
     };
