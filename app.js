@@ -327,12 +327,27 @@ const buildDevices = async () => {
       created = await apiFetch('/api/cases', { method: 'POST', body: JSON.stringify(payload) });
     } catch (caseErr) {
       console.error('Case creation failed', caseErr, payload);
-      throw caseErr;
+      logSimulatorError(`Case creation failed for ${deviceId}: ${caseErr.message}`);
+      continue;
     }
-    const activationCode = created.activation_code ?? created.case?.activation_code;
-    if (!activationCode) throw new Error('Activation code missing from case response');
-    const enroll = await apiFetch('/api/devices/enroll', { method: 'POST', body: JSON.stringify({ device_id: deviceId, pin: activationCode }) });
     const caseId = created.case?.id ?? created.id;
+    const activationCode = created.activation_code ?? created.case?.activation_code;
+    if (!activationCode || !caseId) {
+      logSimulatorError(`Case response missing id/PIN for ${deviceId}`);
+      continue;
+    }
+    let enroll;
+    try {
+      enroll = await apiFetch('/api/devices/enroll', { method: 'POST', body: JSON.stringify({ device_id: deviceId, pin: activationCode }) });
+    } catch (enrollErr) {
+      console.error('Enrollment failed', enrollErr, deviceId, activationCode);
+      logSimulatorError(`Enrollment failed for ${deviceId}: ${enrollErr.message}`);
+      continue;
+    }
+    if (!enroll || !enroll.api_key) {
+      logSimulatorError(`Enrollment returned no API key for ${deviceId}`);
+      continue;
+    }
     if (caseId) simState.createdCases.push(caseId);
     const device = {
       caseId,
