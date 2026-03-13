@@ -89,12 +89,14 @@ const jitter = (value, delta) => value + (Math.random()-0.5)*delta;
 const randomPhone = () => `07${Math.floor(10000000 + Math.random()*89999999)}`;
 const citySpread = 0.12;
 const distanceFromCentre = () => citySpread * (0.2 + Math.pow(Math.random(), 2) * 2.0);
-const move = (base) => {
-  const distance = distanceFromCentre();
-  const angle = Math.random()*Math.PI*2;
+const metersToDegrees = (meters) => meters / 111000;
+const move = (base, active = false) => {
+  const maxDistance = active ? metersToDegrees(50) : metersToDegrees(10000);
+  const distance = Math.random() * maxDistance;
+  const angle = Math.random() * Math.PI * 2;
   return {
-    latitude: base.latitude + Math.cos(angle)*distance,
-    longitude: base.longitude + Math.sin(angle)*distance
+    latitude: base.latitude + Math.cos(angle) * distance,
+    longitude: base.longitude + Math.sin(angle) * distance
   };
 };
 
@@ -181,7 +183,7 @@ const schedule = (device, next, active=false, burstEnd=0) => {
   const delay = Number.isFinite(next) ? next : 1000;
   const timer = setTimeout(async () => {
     if (!simState.running) return;
-    device.location = move(device.base);
+    device.location = move(device.base, active);
     await simulateUpdate(device, active);
     device.base = { ...device.location };
     if (active) {
