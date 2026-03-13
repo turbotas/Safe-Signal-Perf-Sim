@@ -17,12 +17,13 @@ button { cursor: pointer; }
 .secondary { background: #1d4ed8; }
 .panel header { display: flex; align-items: center; justify-content: space-between; }
 .stats { display: flex; gap: 1rem; font-size: 0.85rem; }
-#device-grid { margin-top: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(30px, 1fr)); gap: 4px; max-height: 360px; overflow: auto; }
-.device-cell { width: 100%; aspect-ratio: 1 / 1; border-radius: 6px; background: #1f2937; border: 1px solid #374151; display: flex; align-items: center; justify-content: center; position: relative; font-size: 0.75rem; }
-.device-cell span { pointer-events: none; }
-.device-cell::after { content: ''; position: absolute; width: 14px; height: 14px; border-radius: 50%; bottom: 4px; right: 4px; opacity: 0.7; box-shadow: 0 0 6px rgba(15,23,42,0.6); }
-.device-cell.idle::after { background: #16a34a; }
-.device-cell.normal::after { background: #f97316; }
-.device-cell.active::after { background: #b91c1c; }
-.device-cell.flash::after { animation: flashPulse 1.5s ease; background: #38bdf8; box-shadow: 0 0 12px rgba(56,189,248,0.85); }
+.container { max-width: 1400px; }
+#device-grid { margin-top: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(48px, 1fr)); gap: 6px; max-height: calc(100vh - 320px); overflow: auto; }
+.device-cell { width: 100%; aspect-ratio: 1 / 1; border-radius: 8px; background: #0f172a; border: 1px solid #374151; display: flex; align-items: center; justify-content: center; position: relative; font-size: 0.75rem; }
+.device-cell span { position: relative; z-index: 1; pointer-events: none; font-weight: 600; }
+.device-cell::after { content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%; bottom: 6px; right: 6px; opacity: 0.9; box-shadow: 0 0 6px rgba(15,23,42,0.6); z-index: 0; }
+.device-cell.idle::after { background: #34d399; }
+.device-cell.normal::after { background: #fb923c; }
+.device-cell.active::after { background: #dc2626; }
+.device-cell.flash::after { animation: flashPulse 1.3s ease; background: #38bdf8; box-shadow: 0 0 14px rgba(56,189,248,0.9); }
 @keyframes flashPulse { 0%, 100% { transform: scale(0.8); opacity: 0.55; } 50% { transform: scale(1.4); opacity: 1; } }

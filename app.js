@@ -143,7 +143,7 @@ const createGrid = () => {
     const el = document.createElement('div');
     el.className = 'device-cell idle';
     el.title = `Device ${d.deviceId}`;
-    el.textContent = d.deviceId.slice(-2);
+    el.innerHTML = `<span>${d.deviceId.slice(-2)}</span>`;
     ui.grid.appendChild(el);
     d.el = el;
     setLightState(d, 'idle');
