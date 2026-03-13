@@ -18,8 +18,9 @@ button { cursor: pointer; }
 .panel header { display: flex; align-items: center; justify-content: space-between; }
 .stats { display: flex; gap: 1rem; font-size: 0.85rem; }
 .container { max-width: 1400px; }
-#device-grid { margin-top: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(48px, 1fr)); gap: 6px; max-height: calc(100vh - 320px); overflow: auto; }
-.device-cell { width: 100%; aspect-ratio: 1 / 1; border-radius: 8px; background: #0f172a; border: 1px solid #374151; display: flex; align-items: center; justify-content: center; position: relative; font-size: 0.75rem; }
+.container { max-width: 1400px; }
+#device-grid { margin-top: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(32px, 1fr)); gap: 4px; max-height: calc(100vh - 300px); overflow: auto; }
+.device-cell { width: 100%; aspect-ratio: 1 / 1; border-radius: 6px; background: #0b1222; border: 1px solid #1f2937; display: flex; align-items: center; justify-content: center; position: relative; font-size: 0.7rem; }
 .device-cell span { position: relative; z-index: 1; pointer-events: none; font-weight: 600; }
 .device-cell::after { content: ''; position: absolute; width: 16px; height: 16px; border-radius: 50%; bottom: 6px; right: 6px; opacity: 0.9; box-shadow: 0 0 6px rgba(15,23,42,0.6); z-index: 0; }
 .device-cell.idle::after { background: #34d399; }
