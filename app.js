@@ -176,7 +176,7 @@ const getRandomInterval = () => {
   return min + Math.random()*range;
 };
 
-const schedule = (device, next, active=false) => {
+const schedule = (device, next, active=false, burstEnd=0) => {
   if (!simState.running) return;
   const delay = Number.isFinite(next) ? next : 1000;
   const timer = setTimeout(async () => {
@@ -185,17 +185,26 @@ const schedule = (device, next, active=false) => {
     await simulateUpdate(device, active);
     device.base = { ...device.location };
     if (active) {
-      simState.stats.active += 1;
-      updateStats();
-      setTimeout(() => {
-        simState.stats.active -= 1;
+      const now = Date.now();
+      if (now >= burstEnd) {
+        device.activeBurstEnd = 0;
+        simState.stats.active = Math.max(0, simState.stats.active - 1);
         updateStats();
         schedule(device, getRandomInterval(), false);
-      }, config.activeDurationMs);
+      } else {
+        schedule(device, config.activeIntervalMs, true, burstEnd);
+      }
     } else {
       const shouldActivate = Math.random() < config.activationChance;
-      const nextDelay = shouldActivate ? config.activationIntervalMs : getRandomInterval();
-      schedule(device, nextDelay, shouldActivate);
+      if (shouldActivate) {
+        const end = Date.now() + config.activeDurationMs;
+        device.activeBurstEnd = end;
+        simState.stats.active += 1;
+        updateStats();
+        schedule(device, 0, true, end);
+      } else {
+        schedule(device, getRandomInterval(), false);
+      }
     }
   }, delay);
   simState.timeouts.push(timer);
