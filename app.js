@@ -366,8 +366,17 @@ const buildDevices = async () => {
   }
 };
 const startDeviceLoops = () => {
-  const initialDelayMs = 500;
-  simState.devices.forEach((device) => schedule(device, initialDelayMs, false));
+  const initialDelayMs = Math.max(0, config.caseDelayMs) || 0;
+  const step = 15;
+  const maxJitter = 25;
+  simState.devices.forEach((device, index) => {
+    const delay = initialDelayMs + index * step + Math.random() * maxJitter;
+    const timer = setTimeout(() => {
+      if (!simState.running) return;
+      schedule(device, 0);
+    }, delay);
+    simState.timeouts.push(timer);
+  });
 };
 
 const clearTimers = () => {
