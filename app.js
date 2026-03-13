@@ -21,6 +21,7 @@ const ui = {
   loginStatus: document.getElementById('login-status'),
   start: document.getElementById('start-sim'),
   stop: document.getElementById('stop-sim'),
+  retryTeardown: document.getElementById('retry-teardown'),
   grid: document.getElementById('device-grid'),
   stats: {
     total: document.getElementById('stat-count'),
@@ -28,7 +29,13 @@ const ui = {
     errors: document.getElementById('stat-errors')
   }
 };
-let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [], timeouts: [], createdCases: [] };
+const femaleNames = ['Aisling','Ciara','Fiona','Maeve','Niamh','Róisín','Sinead','Orla','Cara','Bronagh','Aoife','Siobhán','Eabha'];
+const maleNames = ['Connor','Liam','Sean','Eoin','Patrick','Declan','Finn','Cian','Darragh','Ronan','Emmett'];
+const lastNames = ['O’Brien','Murphy','Kelly','McCarthy','Walsh','Byrne','Sullivan','O’Neill','Fitzgerald','Doyle','Reilly','Lynch','Kane','Brennan'];
+const officerNames = ['Sergeant Hynes','DS Murray','Inspector Stratton','PC Avery','Lieutenant Fisher','Supt. Blake'];
+const mapLabels = ['PerfSim','SafeSignal','Control','OpsBeat'];
+const languages = ['en-GB','cy-GB','gd-GB','ga-IE'];
+let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [], timeouts: [], createdCases: [], failedTeardowns: [] };
 let isAuthenticated = false;
 const clusters = [
   { latitude: 51.5074, longitude: -0.1278, name: 'London' },
@@ -59,10 +66,25 @@ const clusters = [
   { latitude: 53.3498, longitude: -6.2603, name: 'Dublin (Docklands)' },
   { latitude: 54.9776, longitude: -1.6130, name: 'Newcastle upon Tyne' }
 ];
-const names = ['Jamie','Morgan','Alex','Taylor','Jordan','Cameron','Casey'];
-const surnames = ['Reed','Morgan','Bryan','Stewart','Doyle','Lennon'];
 const osTypes = ['Android','Apple'];
 const getRandom = (arr) => arr[Math.floor(Math.random()*arr.length)];
+const pickGender = () => (Math.random() < 0.9 ? 'Female' : 'Male');
+const pickName = (gender) => gender === 'Female' ? getRandom(femaleNames) : getRandom(maleNames);
+const sanitizeForEmail = (value) => value.replace(/[^a-zA-Z]/g, '').toLowerCase();
+const randomEmail = (first, last) => `${sanitizeForEmail(first)}.${sanitizeForEmail(last)}@perfsim.local`;
+const randomFutureDate = (minDays = 21, maxDays = 90) => {
+  const date = new Date();
+  const offset = minDays + Math.floor(Math.random() * (maxDays - minDays + 1));
+  date.setDate(date.getDate() + offset);
+  return date.toISOString().split('T')[0];
+};
+const randomDob = () => {
+  const date = new Date();
+  const age = 25 + Math.floor(Math.random() * 30);
+  date.setFullYear(date.getFullYear() - age);
+  date.setDate(date.getDate() - Math.floor(Math.random() * 365));
+  return date.toISOString().split('T')[0];
+};
 const jitter = (value, delta) => value + (Math.random()-0.5)*delta;
 const randomPhone = () => `07${Math.floor(10000000 + Math.random()*89999999)}`;
 const citySpread = 0.12;
@@ -179,20 +201,40 @@ const schedule = (device, next, active=false) => {
   simState.timeouts.push(timer);
 };
 let config = {};
-const createCasePayload = (organisation_id, deviceId) => ({
-  registered_user: `${getRandom(names)} ${getRandom(surnames)}`,
-  gender: getRandom(['Female','Male']),
-  risk_level: getRandom(['High','Medium','Low']),
-  local_reference: `Perf-${Math.floor(Math.random()*100000)}`,
-  officer_name: 'System Perf',
-  officer_staff_id: 'PERF01',
-  map_label: 'PerfSim',
-  os_type: getRandom(osTypes),
-  status: 'Open',
-  language_code: 'en-GB'
-  , device: deviceId
-  , organisation_id
-});
+const riskLevels = ['High','Medium','Low'];
+const createCasePayload = (organisation_id, deviceId) => {
+  const gender = pickGender();
+  const firstName = pickName(gender);
+  const lastName = getRandom(lastNames);
+  const registered_user = `${firstName} ${lastName}`;
+  const review_date = randomFutureDate();
+  const payload = {
+    registered_user,
+    gender,
+    risk_level: getRandom(riskLevels),
+    email_address: randomEmail(firstName, lastName),
+    local_reference: `Perf-${Math.floor(Math.random()*100000)}`,
+    officer_name: getRandom(officerNames),
+    officer_staff_id: `PERF-${Math.floor(100 + Math.random()*900)}`,
+    authorising_officer: getRandom(officerNames),
+    map_label: `${getRandom(mapLabels)}-${Math.floor(Math.random()*500)}`,
+    os_type: getRandom(osTypes),
+    status: 'Open',
+    language_code: getRandom(languages),
+    review_date,
+    device: deviceId,
+    organisation_id
+  };
+  if (Math.random() < 0.35) {
+    const perpGender = pickGender();
+    payload.perp_name = `${pickName(perpGender)} ${getRandom(lastNames)}`;
+    payload.perp_gender = perpGender;
+    payload.perp_dob = randomDob();
+    payload.perp_pnd_id = `PND-${Math.floor(100000 + Math.random()*899999)}`;
+    payload.perp_court_order = `Bail Order ${Math.floor(Math.random()*900)+100}`;
+  }
+  return payload;
+};
 
 const buildDevices = async () => {
   simState.devices = [];
@@ -239,21 +281,32 @@ const clearTimers = () => {
   simState.timeouts = [];
 };
 
-const teardownCases = async () => {
-  if (!simState.createdCases.length) return;
-  const cases = Array.from(new Set(simState.createdCases));
-  for (const caseId of cases) {
+const updateRetryButtonState = () => {
+  if (ui.retryTeardown) {
+    ui.retryTeardown.disabled = !simState.failedTeardowns.length;
+  }
+};
+
+const executeTeardownForCase = async (caseId) => {
+  if (config.teardownMode === 'delete') {
+    await apiFetch(`/api/cases/${caseId}`, { method: 'DELETE' });
+  } else {
+    await apiFetch(`/api/cases/${caseId}`, { method: 'PATCH', body: JSON.stringify({ status: 'Archived', enrollment: 0 }) });
+  }
+};
+
+const teardownCases = async (caseIds) => {
+  const failures = [];
+  const targets = Array.from(new Set(caseIds));
+  for (const caseId of targets) {
     try {
-      if (config.teardownMode === 'delete') {
-        await apiFetch(`/api/cases/${caseId}`, { method: 'DELETE' });
-      } else {
-        await apiFetch(`/api/cases/${caseId}`, { method: 'PATCH', body: JSON.stringify({ status: 'Archived', enrollment: 0 }) });
-      }
+      await executeTeardownForCase(caseId);
     } catch (err) {
       console.error(`Teardown failed for case ${caseId}`, err);
+      failures.push(caseId);
     }
   }
-  simState.createdCases = [];
+  return failures;
 };
 
 const stopSimulation = async () => {
@@ -261,15 +314,31 @@ const stopSimulation = async () => {
   simState.running = false;
   clearTimers();
   ui.loginStatus.textContent = 'Stopping simulation...';
-  try {
-    await teardownCases();
+  const failures = await teardownCases(simState.createdCases);
+  simState.failedTeardowns = failures;
+  simState.createdCases = [];
+  updateRetryButtonState();
+  if (failures.length) {
+    ui.loginStatus.textContent = `${failures.length} case(s) still need cleanup; hit Retry Failed Teardowns.`;
+  } else {
     ui.loginStatus.textContent = 'Simulation stopped';
-  } catch (err) {
-    console.error('Teardown failed', err);
-    ui.loginStatus.textContent = 'Simulation stopped (teardown errors logged)';
   }
   ui.start.disabled = false;
   ui.stop.disabled = true;
+};
+
+const retryFailedTeardowns = async () => {
+  if (!simState.failedTeardowns.length) return;
+  ui.loginStatus.textContent = 'Retrying failed teardowns...';
+  ui.retryTeardown.disabled = true;
+  const failures = await teardownCases(simState.failedTeardowns);
+  simState.failedTeardowns = failures;
+  updateRetryButtonState();
+  if (failures.length) {
+    ui.loginStatus.textContent = `${failures.length} case(s) still require manual cleanup.`;
+  } else {
+    ui.loginStatus.textContent = 'All tear-downs now completed';
+  }
 };
 
 const startSimulation = async () => {
@@ -279,6 +348,8 @@ const startSimulation = async () => {
   }
   if (simState.running) return;
   clearTimers();
+  simState.failedTeardowns = [];
+  updateRetryButtonState();
   const minMinutesInput = parseInt(document.getElementById('update-min').value,10);
   const maxMinutesInput = parseInt(document.getElementById('update-max').value,10);
   const minMinutes = Number.isFinite(minMinutesInput) ? minMinutesInput : 30;
@@ -351,3 +422,6 @@ ui.start.addEventListener('click', startSimulation);
 ui.stop.addEventListener('click', () => {
   stopSimulation();
 });
+if (ui.retryTeardown) {
+  ui.retryTeardown.addEventListener('click', retryFailedTeardowns);
+}

@@ -14,6 +14,7 @@ input, select, button { background: #1f2937; border: 1px solid #374151; color: #
 input, select { flex: 1; min-width: 140px; }
 .actions { margin-top: 0.5rem; display: flex; gap: 0.5rem; }
 button { cursor: pointer; }
+.secondary { background: #1d4ed8; }
 .panel header { display: flex; align-items: center; justify-content: space-between; }
 .stats { display: flex; gap: 1rem; font-size: 0.85rem; }
 #device-grid { margin-top: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(30px, 1fr)); gap: 4px; max-height: 360px; overflow: auto; }
