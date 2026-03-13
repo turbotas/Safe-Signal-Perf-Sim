@@ -29,9 +29,9 @@ const ui = {
     errors: document.getElementById('stat-errors')
   }
 };
-const femaleNames = ['Aisling','Ciara','Fiona','Maeve','Niamh','Róisín','Sinead','Orla','Cara','Bronagh','Aoife','Siobhán','Eabha'];
-const maleNames = ['Connor','Liam','Sean','Eoin','Patrick','Declan','Finn','Cian','Darragh','Ronan','Emmett'];
-const lastNames = ['O’Brien','Murphy','Kelly','McCarthy','Walsh','Byrne','Sullivan','O’Neill','Fitzgerald','Doyle','Reilly','Lynch','Kane','Brennan'];
+const femaleNames = ['Aisling','Ciara','Fiona','Maeve','Niamh','Róisín','Sinead','Orla','Cara','Bronagh','Aoife','Siobhán','Eabha','Kiera','Megan','Imelda','Nora','Isla','Saoirse','Eilis','Harper','Zara','Naomi','Elena','Priya','Maya','Ariana','Lena','Clara','Rosa','Yara','Sofia','Camila','Mila','Leah','Ruby','Lina','Zoe','Jade','Aria','Mira','Talia','Nadia','Ivy','Paige','Danielle','Vivian','June','Macy','Elsa','Amara'];
+const maleNames = ['Connor','Liam','Sean','Eoin','Patrick','Declan','Finn','Cian','Darragh','Ronan','Emmett','Colm','Rory','Padraig','Callum','Tadhg','Cillian','Jamie','Bryan','Noah','Leo','Ethan','Mateo','Ibrahim','Luca','Oscar','Jasper','Adrian','Nolan','Ezra','Miles','Hugo','Alex','Pablo','Martin','Haruki','Kai','Jonas','Milo','Isaac','Tomas','Diego','Rafael','Jordan','Morgan','Gabriel','Soren','Caleb','Rian','Max','Oliver'];
+const lastNames = ['O’Brien','Murphy','Kelly','McCarthy','Walsh','Byrne','Sullivan','O’Neill','Fitzgerald','Doyle','Reilly','Lynch','Kane','Brennan','O’Donnell','O’Keefe','Donovan','O’Connor','Quinn','Sweeney','Hughes','Moreau','Schmidt','López','Rossi','Petrov','Matsuda','Nguyen','Harper','Bennett','Jackson','Khan','Martinez','Singh','Gonzalez','Silva','Costa','Rinaldi','Miller','Roy','Chang','Zhang','Brown','Santos','White','Ali','Taylor','Murphy-Smith','Anders','Larsen','Hernández','Novák'];
 const officerNames = ['Sergeant Hynes','DS Murray','Inspector Stratton','PC Avery','Lieutenant Fisher','Supt. Blake'];
 const mapLabels = ['PerfSim','SafeSignal','Control','OpsBeat'];
 const languages = ['en-GB','cy-GB','gd-GB','ga-IE'];
