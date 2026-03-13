@@ -23,6 +23,13 @@
     </section>
     <section class="panel" id="config-panel">
       <h2>Configuration</h2>
+      <div class="endpoint-row">
+        <div class="endpoint-label">API Endpoint</div>
+        <div class="endpoint-input">
+          <input type="text" id="api-endpoint" placeholder="http://localhost:8000">
+          <div class="endpoint-display">Using <span id="api-endpoint-display"></span></div>
+        </div>
+      </div>
       <label>Device Count
         <input type="number" id="device-count" min="10" max="5000" value="200" step="100">
       </label>

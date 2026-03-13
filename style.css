@@ -3,6 +3,11 @@ body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: #0
 .container { max-width: 1200px; margin: 0 auto; padding: 1rem; }
 header h1 { margin-bottom: 0.2rem; font-size: 1.8rem; }
 .panel { margin-top: 1rem; background: #111827; border-radius: 12px; padding: 1rem; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+.endpoint-row { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 1rem; }
+.endpoint-label { font-size: 0.85rem; color: #e5e7eb; font-weight: 600; }
+.endpoint-input { display: flex; flex-direction: column; gap: 0.25rem; }
+.endpoint-input input { width: 100%; }
+.endpoint-display { font-size: 0.8rem; color: #a5b4fc; }
 .panel h2 { margin: 0 0 0.75rem; }
 form, .panel label { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 input, select, button { background: #1f2937; border: 1px solid #374151; color: #e5e7eb; padding: 0.5rem 0.75rem; border-radius: 8px; }

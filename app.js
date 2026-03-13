@@ -1,6 +1,13 @@
-const BASE_URL = 'http://localhost:8000';
+const DEFAULT_BASE_URL = 'http://localhost:8000';
+let baseUrl = localStorage.getItem('simBaseUrl') || DEFAULT_BASE_URL;
+const setBaseUrl = (url) => {
+  const trimmed = url ? url.replace(/\/+$/, '') : DEFAULT_BASE_URL;
+  baseUrl = trimmed || DEFAULT_BASE_URL;
+  localStorage.setItem('simBaseUrl', baseUrl);
+};
+setBaseUrl(baseUrl);
 const apiFetch = async (path, options = {}) => {
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await fetch(`${baseUrl}${path}`, {
     ...options,
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
@@ -42,8 +49,15 @@ const clusters = [
   { latitude: 53.8008, longitude: -1.5491, name: 'Sheffield' },
   { latitude: 52.2280, longitude: 0.1218, name: 'Cambridge' },
   { latitude: 57.1497, longitude: -2.0943, name: 'Aberdeen' },
-  { latitude: 54.5682, longitude: -1.2348, name: 'Newcastle' },
-  { latitude: 51.8979, longitude: -3.1695, name: 'Cardiff' }
+  { latitude: 54.7850, longitude: -6.0190, name: 'Derry' },
+  { latitude: 54.5780, longitude: -8.4761, name: 'Sligo' },
+  { latitude: 53.2707, longitude: -9.0568, name: 'Galway' },
+  { latitude: 52.6680, longitude: -8.6305, name: 'Cork' },
+  { latitude: 52.6638, longitude: -8.6267, name: 'Limerick' },
+  { latitude: 52.2574, longitude: -7.1129, name: 'Waterford' },
+  { latitude: 53.2978, longitude: -6.3621, name: 'Meath' },
+  { latitude: 53.3498, longitude: -6.2603, name: 'Dublin (Docklands)' },
+  { latitude: 54.9776, longitude: -1.6130, name: 'Newcastle upon Tyne' }
 ];
 const names = ['Jamie','Morgan','Alex','Taylor','Jordan','Cameron','Casey'];
 const surnames = ['Reed','Morgan','Bryan','Stewart','Doyle','Lennon'];
@@ -51,9 +65,10 @@ const osTypes = ['Android','Apple'];
 const getRandom = (arr) => arr[Math.floor(Math.random()*arr.length)];
 const jitter = (value, delta) => value + (Math.random()-0.5)*delta;
 const randomPhone = () => `07${Math.floor(10000000 + Math.random()*89999999)}`;
-const citySpread = 0.06;
+const citySpread = 0.12;
+const distanceFromCentre = () => citySpread * (0.2 + Math.pow(Math.random(), 2) * 2.0);
 const move = (base) => {
-  const distance = Math.random()*citySpread;
+  const distance = distanceFromCentre();
   const angle = Math.random()*Math.PI*2;
   return {
     latitude: base.latitude + Math.cos(angle)*distance,
@@ -67,6 +82,19 @@ const randomRegionBase = () => ({
 });
 
 const sampleBaseLocation = () => Math.random() < 0.7 ? { ...getRandom(clusters) } : randomRegionBase();
+const endpointInput = document.getElementById('api-endpoint');
+const endpointDisplay = document.getElementById('api-endpoint-display');
+const refreshEndpointInfo = () => {
+  if (endpointDisplay) endpointDisplay.textContent = baseUrl;
+  if (endpointInput) endpointInput.value = baseUrl;
+};
+if (endpointInput) {
+  endpointInput.addEventListener('change', (event) => {
+    setBaseUrl(event.target.value);
+    refreshEndpointInfo();
+  });
+}
+refreshEndpointInfo();
 const updateStats = () => {
   ui.stats.total.textContent = simState.stats.total;
   ui.stats.active.textContent = simState.stats.active;
@@ -133,6 +161,7 @@ const schedule = (device, next, active=false) => {
     if (!simState.running) return;
     device.location = move(device.base);
     await simulateUpdate(device, active);
+    device.base = { ...device.location };
     if (active) {
       simState.stats.active += 1;
       updateStats();
