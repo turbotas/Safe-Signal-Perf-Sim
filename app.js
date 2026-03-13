@@ -178,36 +178,42 @@ const getRandomInterval = () => {
   return min + Math.random()*range;
 };
 
-const schedule = (device, next, active=false, burstEnd=0) => {
+const schedule = (device, nextDelay) => {
   if (!simState.running) return;
-  const delay = Number.isFinite(next) ? next : 1000;
+  const delay = Number.isFinite(nextDelay) ? nextDelay : 1000;
   const timer = setTimeout(async () => {
     if (!simState.running) return;
-    device.location = move(device.base, active);
-    await simulateUpdate(device, active);
+    const now = Date.now();
+    const isActiveNow = device.activeBurstEnd && now < device.activeBurstEnd;
+    if (isActiveNow && !device.isActive) {
+      device.isActive = true;
+      simState.stats.active += 1;
+      updateStats();
+    } else if (!isActiveNow && device.isActive) {
+      device.isActive = false;
+      simState.stats.active = Math.max(0, simState.stats.active - 1);
+      updateStats();
+      device.activeBurstEnd = 0;
+    }
+    device.location = move(device.base, isActiveNow);
+    await simulateUpdate(device, isActiveNow);
     device.base = { ...device.location };
-    if (active) {
-      const now = Date.now();
-      if (now >= burstEnd) {
-        device.activeBurstEnd = 0;
-        simState.stats.active = Math.max(0, simState.stats.active - 1);
-        updateStats();
-        schedule(device, getRandomInterval(), false);
-      } else {
-        schedule(device, config.activeIntervalMs, true, burstEnd);
-      }
-    } else {
-      const shouldActivate = Math.random() < config.activationChance;
-      if (shouldActivate) {
-        const end = Date.now() + config.activeDurationMs;
-        device.activeBurstEnd = end;
+    let next;
+    if (isActiveNow) {
+      next = config.activeIntervalMs;
+    } else if (Math.random() < config.activationChance) {
+      const end = Date.now() + config.activeDurationMs;
+      device.activeBurstEnd = end;
+      if (!device.isActive) {
+        device.isActive = true;
         simState.stats.active += 1;
         updateStats();
-        schedule(device, 0, true, end);
-      } else {
-        schedule(device, getRandomInterval(), false);
       }
+      next = config.activeIntervalMs;
+    } else {
+      next = getRandomInterval();
     }
+    schedule(device, next);
   }, delay);
   simState.timeouts.push(timer);
 };
@@ -315,7 +321,8 @@ const buildDevices = async () => {
       location,
       base,
       updates: 0,
-      active: false
+      isActive: false,
+      activeBurstEnd: 0
     };
     simState.devices.push(device);
   }
