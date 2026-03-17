@@ -499,7 +499,14 @@ const startSimulation = async () => {
 };
 ui.loginForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const body = { email: document.getElementById('sim-email').value, password: document.getElementById('sim-password').value };
+  const code = document.getElementById('sim-code').value.trim();
+  const body = {
+    email: document.getElementById('sim-email').value,
+    password: document.getElementById('sim-password').value
+  };
+  if (code) {
+    body.code = code;
+  }
   try {
     await apiFetch('/api/auth/login', { method: 'POST', body: JSON.stringify(body) });
     ui.loginStatus.textContent = 'Authenticated';
