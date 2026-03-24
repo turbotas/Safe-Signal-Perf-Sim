@@ -1,2 +1,0 @@
-# Safe Signal Performance Simulator
-
