@@ -177,7 +177,81 @@ const randomRegionBase = () => ({
   longitude: -7 + Math.random()*8
 });
 
-const sampleBaseLocation = () => Math.random() < 0.7 ? { ...getRandom(clusters) } : randomRegionBase();
+const parseCoordinate = (value) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const normalized = trimmed.includes(',') && !trimmed.includes('.') ? trimmed.replace(',', '.') : trimmed;
+    const parsed = parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+const isValidCoordinatePair = (latitude, longitude) =>
+  latitude !== null && longitude !== null && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180;
+const tryReadCoordinatePair = (source) => {
+  if (!source || typeof source !== 'object') return null;
+  const latKeys = ['latitude', 'lat', 'map_default_lat', 'default_lat', 'geo_center_latitude', 'geo_centre_latitude', 'geocenter_latitude', 'geocentre_latitude', 'center_latitude', 'centre_latitude'];
+  const lonKeys = ['longitude', 'lng', 'lon', 'long', 'map_default_lng', 'default_lng', 'map_default_lon', 'default_lon', 'geo_center_longitude', 'geo_centre_longitude', 'geocenter_longitude', 'geocentre_longitude', 'center_longitude', 'centre_longitude'];
+  for (const latKey of latKeys) {
+    if (!(latKey in source)) continue;
+    for (const lonKey of lonKeys) {
+      if (!(lonKey in source)) continue;
+      const latitude = parseCoordinate(source[latKey]);
+      const longitude = parseCoordinate(source[lonKey]);
+      if (isValidCoordinatePair(latitude, longitude)) {
+        return { latitude, longitude };
+      }
+    }
+  }
+  return null;
+};
+const findCoordinatePairDeep = (value, depth = 0, seen = new Set()) => {
+  if (!value || typeof value !== 'object' || depth > 5) return null;
+  if (seen.has(value)) return null;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findCoordinatePairDeep(item, depth + 1, seen);
+      if (found) return found;
+    }
+    return null;
+  }
+  const direct = tryReadCoordinatePair(value);
+  if (direct) return direct;
+  const keys = Object.keys(value).sort((a, b) => {
+    const aScore = /(geo|centre|center|location)/i.test(a) ? 1 : 0;
+    const bScore = /(geo|centre|center|location)/i.test(b) ? 1 : 0;
+    return bScore - aScore;
+  });
+  for (const key of keys) {
+    const nested = value[key];
+    if (!nested || typeof nested !== 'object') continue;
+    const found = findCoordinatePairDeep(nested, depth + 1, seen);
+    if (found) return found;
+  }
+  return null;
+};
+const getOrganisationGeoCenter = (org) => {
+  if (!org || typeof org !== 'object') return null;
+  return findCoordinatePairDeep(org);
+};
+const normaliseOrganisationList = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (!payload || typeof payload !== 'object') return [];
+  const candidates = [payload.items, payload.organisations, payload.organizations, payload.data, payload.results];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+};
+const sampleBaseLocation = (org) => {
+  const center = getOrganisationGeoCenter(org);
+  if (center) {
+    return center;
+  }
+  return Math.random() < 0.7 ? { ...getRandom(clusters) } : randomRegionBase();
+};
 const endpointInput = document.getElementById('api-endpoint');
 const endpointDisplay = document.getElementById('api-endpoint-display');
 const refreshEndpointInfo = () => {
@@ -408,9 +482,9 @@ const buildDevices = async () => {
   simState.createdCases = [];
   simState.timeouts = [];
   for (let i=0;i<config.deviceCount;i++) {
-    const base = sampleBaseLocation();
-    const location = move(base);
     const org = getRandom(simState.organisations);
+    const base = sampleBaseLocation(org);
+    const location = move(base);
     const organisationId = org ? org.id : undefined;
     const deviceId = randomPhone();
     const payload = createCasePayload(organisationId, deviceId);
@@ -620,7 +694,7 @@ ui.loginForm.addEventListener('submit', async (event) => {
     let orgResponse = [];
     try {
       const list = await apiFetch('/api/organisations?limit=1000');
-      orgResponse = list.items || [];
+      orgResponse = normaliseOrganisationList(list);
     } catch (err) {
       console.error('Failed to load organizations', err);
     }
@@ -635,6 +709,17 @@ ui.loginForm.addEventListener('submit', async (event) => {
       ui.loginStatus.textContent = 'No accessible organisations';
       isAuthenticated = false;
       ui.start.disabled = true;
+    } else {
+      const geocentredCount = simState.organisations.filter((org) => !!getOrganisationGeoCenter(org)).length;
+      if (pendingEntries.length) {
+        ui.loginStatus.textContent = `Authenticated (${pendingEntries.length} persisted case(s) pending cleanup, ${geocentredCount}/${simState.organisations.length} org geocenters)`;
+      } else {
+        ui.loginStatus.textContent = `Authenticated (${geocentredCount}/${simState.organisations.length} org geocenters)`;
+      }
+      if (geocentredCount === 0 && simState.organisations.length) {
+        console.warn('No organisation geocenters found. Sample org payload:', simState.organisations[0]);
+        logSimulatorError('No organisation geocenters detected; using fallback random clusters.');
+      }
     }
   } catch (err) {
     ui.loginStatus.textContent = 'Login failed';
