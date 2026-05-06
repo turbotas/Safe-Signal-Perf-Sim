@@ -84,7 +84,11 @@ const apiFetch = async (path, options = {}) => {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   if (response.status === 204) return null;
   return response.json();
 };
@@ -556,11 +560,40 @@ const clearTimers = () => {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const errorLogEl = document.getElementById('error-log');
 
+const extractCaseStatus = (caseResponse) => {
+  if (!caseResponse || typeof caseResponse !== 'object') return '';
+  const source = caseResponse.case && typeof caseResponse.case === 'object' ? caseResponse.case : caseResponse;
+  return typeof source.status === 'string' ? source.status.trim().toLowerCase() : '';
+};
+const updateCaseStatus = async (caseId, status) => {
+  await apiFetch(`/api/cases/${caseId}`, { method: 'PATCH', body: JSON.stringify({ status, enrollment: 0 }) });
+};
 const executeTeardownForCase = async (caseId, teardownMode = 'delete') => {
-  if (teardownMode === 'delete') {
-    await apiFetch(`/api/cases/${caseId}`, { method: 'DELETE' });
-  } else {
-    await apiFetch(`/api/cases/${caseId}`, { method: 'PATCH', body: JSON.stringify({ status: 'Archived', enrollment: 0 }) });
+  let caseStatus = '';
+  try {
+    const caseResponse = await apiFetch(`/api/cases/${caseId}`);
+    caseStatus = extractCaseStatus(caseResponse);
+  } catch (err) {
+    if (err.status === 404) return;
+    throw err;
+  }
+  if (caseStatus === 'open') {
+    await updateCaseStatus(caseId, 'Closed');
+    caseStatus = 'closed';
+  }
+  if (caseStatus === 'closed') {
+    await updateCaseStatus(caseId, 'Archived');
+    caseStatus = 'archived';
+  }
+  if (teardownMode === 'archive') {
+    return;
+  }
+  if (caseStatus === 'archived' || !caseStatus) {
+    try {
+      await apiFetch(`/api/cases/${caseId}`, { method: 'DELETE' });
+    } catch (err) {
+      if (err.status !== 404) throw err;
+    }
   }
 };
 
