@@ -217,6 +217,21 @@ const apiFetch = async (path, options = {}) => {
   if (response.status === 204) return null;
   return response.json();
 };
+const apiFetchForm = async (path, formData) => {
+  const response = await fetch(`${baseUrl}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    body: formData
+  });
+  if (!response.ok) {
+    const error = new Error(`HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  if (response.status === 204) return null;
+  const contentType = response.headers.get('content-type') || '';
+  return contentType.includes('application/json') ? response.json() : null;
+};
 const ui = {
   loginForm: document.getElementById('login-form'),
   loginStatus: document.getElementById('login-status'),
@@ -230,9 +245,22 @@ const ui = {
     errors: document.getElementById('stat-errors')
   }
 };
-const femaleNames = ['Aisling','Ciara','Fiona','Maeve','Niamh','Róisín','Sinead','Orla','Cara','Bronagh','Aoife','Siobhán','Eabha','Kiera','Megan','Imelda','Nora','Isla','Saoirse','Eilis','Harper','Zara','Naomi','Elena','Priya','Maya','Ariana','Lena','Clara','Rosa','Yara','Sofia','Camila','Mila','Leah','Ruby','Lina','Zoe','Jade','Aria','Mira','Talia','Nadia','Ivy','Paige','Danielle','Vivian','June','Macy','Elsa','Amara'];
-const maleNames = ['Connor','Liam','Sean','Eoin','Patrick','Declan','Finn','Cian','Darragh','Ronan','Emmett','Colm','Rory','Padraig','Callum','Tadhg','Cillian','Jamie','Bryan','Noah','Leo','Ethan','Mateo','Ibrahim','Luca','Oscar','Jasper','Adrian','Nolan','Ezra','Miles','Hugo','Alex','Pablo','Martin','Haruki','Kai','Jonas','Milo','Isaac','Tomas','Diego','Rafael','Jordan','Morgan','Gabriel','Soren','Caleb','Rian','Max','Oliver'];
-const lastNames = ['O’Brien','Murphy','Kelly','McCarthy','Walsh','Byrne','Sullivan','O’Neill','Fitzgerald','Doyle','Reilly','Lynch','Kane','Brennan','O’Donnell','O’Keefe','Donovan','O’Connor','Quinn','Sweeney','Hughes','Moreau','Schmidt','López','Rossi','Petrov','Matsuda','Nguyen','Harper','Bennett','Jackson','Khan','Martinez','Singh','Gonzalez','Silva','Costa','Rinaldi','Miller','Roy','Chang','Zhang','Brown','Santos','White','Ali','Taylor','Murphy-Smith','Anders','Larsen','Hernández','Novák'];
+const CASE_PHOTO_ROOT = '/simulator/casephotos';
+const CASE_PHOTO_FOLDERS = {
+  male: `${CASE_PHOTO_ROOT}/male/`,
+  female: `${CASE_PHOTO_ROOT}/female/`
+};
+const CASE_PHOTO_FILE_PATTERN = /\.(jpe?g|png|gif|webp|jfif)$/i;
+const casePhotoState = {
+  male: [],
+  female: [],
+  loaded: false,
+  loadingPromise: null,
+  lastError: ''
+};
+const femaleNames = ['Aisling','Ciara','Fiona','Maeve','Niamh','Róisín','Sinead','Orla','Cara','Bronagh','Aoife','Siobhán','Eabha','Kiera','Megan','Imelda','Nora','Isla','Saoirse','Eilis','Harper','Zara','Naomi','Elena','Priya','Maya','Ariana','Lena','Clara','Rosa','Yara','Sofia','Camila','Mila','Leah','Ruby','Lina','Zoe','Jade','Aria','Mira','Talia','Nadia','Ivy','Paige','Danielle','Vivian','June','Macy','Elsa','Amara','Ava','Freya','Skye','Poppy','Heidi','Marnie','Keira','Nina','Lila','Iris','Hazel','Phoebe','Anya','Esme','Bianca','Celeste','Esther','Holly','Marnie','Daisy','Molly','Adele','Sabrina','Noelle','Niam','Elodie','Rhea','Samira','Cleo'];
+const maleNames = ['Connor','Liam','Sean','Eoin','Patrick','Declan','Finn','Cian','Darragh','Ronan','Emmett','Colm','Rory','Padraig','Callum','Tadhg','Cillian','Jamie','Bryan','Noah','Leo','Ethan','Mateo','Ibrahim','Luca','Oscar','Jasper','Adrian','Nolan','Ezra','Miles','Hugo','Alex','Pablo','Martin','Haruki','Kai','Jonas','Milo','Isaac','Tomas','Diego','Rafael','Jordan','Morgan','Gabriel','Soren','Caleb','Rian','Max','Oliver','Aiden','Blake','Carter','Dylan','Elliot','Felix','Grayson','Henry','Ivan','Jude','Kieran','Louis','Micah','Nate','Owen','Quentin','Reece','Spencer','Tristan','Victor','Warren','Xavier','Yusuf','Zane','Arlo','Bodhi','Dominic','Gavin','Harris'];
+const lastNames = ['O’Brien','Murphy','Kelly','McCarthy','Walsh','Byrne','Sullivan','O’Neill','Fitzgerald','Doyle','Reilly','Lynch','Kane','Brennan','O’Donnell','O’Keefe','Donovan','O’Connor','Quinn','Sweeney','Hughes','Moreau','Schmidt','López','Rossi','Petrov','Matsuda','Nguyen','Harper','Bennett','Jackson','Khan','Martinez','Singh','Gonzalez','Silva','Costa','Rinaldi','Miller','Roy','Chang','Zhang','Brown','Santos','White','Ali','Taylor','Murphy-Smith','Anders','Larsen','Hernández','Novák','Abbott','Armstrong','Barrett','Campbell','Carter','Cunningham','Davidson','Edwards','Farrell','Fletcher','Gallagher','Garcia','Griffin','Hayes','Holland','Kennedy','Lawson','Morrison','Palmer','Parker','Reid','Saunders','Stewart','Thornton','Turner','Vargas','Wheeler','Wilkinson','Woodward','Yates'];
 const officerNames = ['Sergeant Hynes','DS Murray','Inspector Stratton','PC Avery','Lieutenant Fisher','Supt. Blake'];
 const mapLabels = ['PerfSim','SafeSignal','Control','OpsBeat'];
 const languages = ['en-GB','cy-GB','gd-GB','ga-IE'];
@@ -392,6 +420,109 @@ const updateRetryButtonState = () => {
     ui.retryTeardown.disabled = getPersistedTeardownEntries().length === 0;
   }
 };
+const parseDirectoryListingForImages = (htmlText, folderPath) => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlText, 'text/html');
+  const links = Array.from(doc.querySelectorAll('a[href]'));
+  return links
+    .map((link) => link.getAttribute('href') || '')
+    .map((href) => {
+      try {
+        const absoluteUrl = new URL(href, `${window.location.origin}${folderPath}`);
+        const pathPart = absoluteUrl.pathname;
+        if (!CASE_PHOTO_FILE_PATTERN.test(pathPart)) return '';
+        const fileName = decodeURIComponent(pathPart.split('/').pop() || '');
+        if (!fileName || fileName.startsWith('.')) return '';
+        return `${folderPath}${fileName}`;
+      } catch (_err) {
+        return '';
+      }
+    })
+    .filter(Boolean);
+};
+const loadPhotoFolder = async (folderPath) => {
+  const response = await fetch(folderPath, { cache: 'no-store' });
+  if (!response.ok) {
+    const error = new Error(`Photo folder load failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  const html = await response.text();
+  return parseDirectoryListingForImages(html, folderPath);
+};
+const photoInventorySummary = () => `photos M:${casePhotoState.male.length} F:${casePhotoState.female.length}`;
+const ensureCasePhotosLoaded = async () => {
+  if (casePhotoState.loaded) return;
+  if (casePhotoState.loadingPromise) {
+    await casePhotoState.loadingPromise;
+    return;
+  }
+  casePhotoState.loadingPromise = (async () => {
+    try {
+      const [malePhotos, femalePhotos] = await Promise.all([
+        loadPhotoFolder(CASE_PHOTO_FOLDERS.male),
+        loadPhotoFolder(CASE_PHOTO_FOLDERS.female)
+      ]);
+      casePhotoState.male = malePhotos;
+      casePhotoState.female = femalePhotos;
+      casePhotoState.lastError = '';
+      casePhotoState.loaded = true;
+      console.info(`Case photo inventory loaded (${photoInventorySummary()})`);
+    } catch (err) {
+      casePhotoState.loaded = false;
+      casePhotoState.lastError = err.message || 'Unknown photo inventory error';
+      casePhotoState.male = [];
+      casePhotoState.female = [];
+      console.warn('Failed to load case photo inventory', err);
+    } finally {
+      casePhotoState.loadingPromise = null;
+    }
+  })();
+  await casePhotoState.loadingPromise;
+};
+const randomCasePhotoForGender = (gender) => {
+  const key = gender === 'Male' ? 'male' : 'female';
+  const pool = casePhotoState[key] || [];
+  if (!pool.length) return '';
+  return randomSpreadPick(pool);
+};
+const guessPhotoContentType = (path) => {
+  const value = String(path || '').toLowerCase();
+  if (/\.(jpe?g|jfif)$/.test(value)) return 'image/jpeg';
+  if (/\.png$/.test(value)) return 'image/png';
+  if (/\.gif$/.test(value)) return 'image/gif';
+  if (/\.webp$/.test(value)) return 'image/webp';
+  return 'application/octet-stream';
+};
+const readPhotoAsset = async (photoPath) => {
+  const response = await fetch(photoPath, { cache: 'no-store' });
+  if (!response.ok) {
+    const error = new Error(`Photo fetch failed (${response.status})`);
+    error.status = response.status;
+    throw error;
+  }
+  const blob = await response.blob();
+  const contentType = blob.type || guessPhotoContentType(photoPath);
+  const fileName = decodeURIComponent((photoPath.split('/').pop() || 'photo').split('?')[0]);
+  return { blob: blob.slice(0, blob.size, contentType), fileName, contentType };
+};
+const uploadCasePhoto = async (caseId, photo) => {
+  const photoAsset = await readPhotoAsset(photo.path);
+  const formData = new FormData();
+  formData.append('target_type', photo.targetType);
+  formData.append('label', photo.label);
+  formData.append('file', photoAsset.blob, photoAsset.fileName);
+  await apiFetchForm(`/api/cases/${caseId}/photos`, formData);
+};
+const uploadCasePhotosBestEffort = async (caseId, photos, deviceId) => {
+  for (const photo of photos) {
+    try {
+      await uploadCasePhoto(caseId, photo);
+    } catch (err) {
+      logSimulatorError(`Photo upload failed for ${deviceId}/${photo.targetType}: ${err.message}`);
+    }
+  }
+};
 const syncPersistedTeardownState = () => {
   const pendingEntries = getPersistedTeardownEntries();
   simState.failedTeardowns = pendingEntries.map((entry) => entry.caseId);
@@ -414,6 +545,11 @@ const initialPendingCases = syncPersistedTeardownState();
 if (initialPendingCases.length) {
   ui.loginStatus.textContent = `${initialPendingCases.length} persisted case(s) pending cleanup.`;
 }
+ensureCasePhotosLoaded().then(() => {
+  if (!initialPendingCases.length && !isAuthenticated) {
+    ui.loginStatus.textContent = `Ready (${photoInventorySummary()})`;
+  }
+});
 const updateStats = () => {
   ui.stats.total.textContent = simState.stats.total;
   ui.stats.active.textContent = simState.stats.active;
@@ -539,11 +675,26 @@ const disabilityIds = [1,2,3,4];
 const warningMarkerIds = [1,2,3,4,5,6];
 const streets = ['Harper Lane','Marlow Road','Beacon Crescent','Harrow Way','Larkspur Drive','Ridgewell Avenue','Keeley Street'];
 const towns = ['Kilburn','Shankill','Greystones','Lisburn','Kingstanding','Belfast','Galway','Cork','Limerick','Brighton','Slough'];
-const vehicleMakes = ['Toyota','Ford','BMW','Audi','Vauxhall','Nissan'];
-const vehicleColors = ['Blue','Black','Silver','Red','White','Green'];
-const vehicleModels = ['Focus','Fiesta','Astra','Camry','i30','Civic'];
+const vehicleCatalog = {
+  Toyota: ['Corolla','Camry','Yaris','RAV4'],
+  Ford: ['Focus','Fiesta','Mondeo','Kuga'],
+  BMW: ['320i','X3','118i','520d'],
+  Audi: ['A3','A4','Q3','Q5'],
+  Vauxhall: ['Astra','Corsa','Insignia','Mokka'],
+  Nissan: ['Juke','Qashqai','Micra','Leaf'],
+  Hyundai: ['i30','Tucson','Kona','i10'],
+  Honda: ['Civic','CR-V','Jazz','Accord']
+};
+const vehicleMakes = Object.keys(vehicleCatalog);
+const vehicleColors = ['Blue','Black','Silver','Red','White','Green','Grey','Navy'];
 const randomSubset = (items) => items.filter(() => Math.random() < 0.4);
 const randomSpreadPick = (items) => items[Math.floor(Math.random() * items.length)];
+const randomVehicleRegistration = () => {
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const randLetter = () => letters[Math.floor(Math.random() * letters.length)];
+  const randDigit = () => Math.floor(Math.random() * 10);
+  return `${randLetter()}${randLetter()}${randDigit()}${randDigit()} ${randLetter()}${randLetter()}${randLetter()}`;
+};
 const randomAddresses = (targetType) => {
   const count = Math.ceil(Math.random()*2);
   return Array.from({length: count}, () => ({
@@ -554,15 +705,19 @@ const randomAddresses = (targetType) => {
     postcode: `${Math.floor(10 + Math.random()*90)}SW${Math.floor(1 + Math.random()*9)}`
   }));
 };
-const randomVehicles = (targetType) => {
-  const count = Math.floor(Math.random()*3);
-  return Array.from({length: count}, () => ({
-    target_type: targetType,
-    make: randomSpreadPick(vehicleMakes),
-    model: randomSpreadPick(vehicleModels),
-    color: randomSpreadPick(vehicleColors),
-    vrm: `${String.fromCharCode(65 + Math.floor(Math.random()*26))}${Math.floor(10 + Math.random()*90)}${String.fromCharCode(65 + Math.floor(Math.random()*26))}`
-  }));
+const randomVehicles = (targetType, minCount = 0, maxCount = 2) => {
+  const span = Math.max(0, maxCount - minCount);
+  const count = minCount + Math.floor(Math.random() * (span + 1));
+  return Array.from({length: count}, () => {
+    const make = randomSpreadPick(vehicleMakes);
+    return {
+      target_type: targetType,
+      make,
+      model: randomSpreadPick(vehicleCatalog[make]),
+      color: randomSpreadPick(vehicleColors),
+      vrm: randomVehicleRegistration()
+    };
+  });
 };
 const createCasePayload = (organisation_id, deviceId) => {
   const gender = pickGender();
@@ -570,6 +725,9 @@ const createCasePayload = (organisation_id, deviceId) => {
   const lastName = getRandom(lastNames);
   const registered_user = `${firstName} ${lastName}`;
   const review_date = randomFutureDate();
+  const addresses = [...randomAddresses('user')];
+  const vehicles = [...randomVehicles('user', 1, 3)];
+  const stagedPhotos = [];
   const payload = {
     registered_user,
     gender,
@@ -587,8 +745,14 @@ const createCasePayload = (organisation_id, deviceId) => {
     risk_category_ids: randomSubset(riskCategoryIds),
     disability_ids: randomSubset(disabilityIds),
     device: deviceId,
-    organisation_id
+    organisation_id,
+    addresses,
+    vehicles
   };
+  const subjectPhoto = randomCasePhotoForGender(gender);
+  if (subjectPhoto) {
+    stagedPhotos.push({ path: subjectPhoto, targetType: 'user', label: `Subject ${registered_user}` });
+  }
   if (Math.random() < 0.35) {
     const perpGender = pickGender();
     payload.perp_name = `${pickName(perpGender)} ${getRandom(lastNames)}`;
@@ -597,16 +761,19 @@ const createCasePayload = (organisation_id, deviceId) => {
     payload.perp_pnd_id = `PND-${Math.floor(100000 + Math.random()*899999)}`;
     payload.perp_court_order = `Bail Order ${Math.floor(Math.random()*900)+100}`;
     payload.warning_marker_ids = randomSubset(warningMarkerIds);
-    payload.perp_addresses = randomAddresses('perp');
-    payload.perp_vehicles = randomVehicles('perp');
+    addresses.push(...randomAddresses('perp'));
+    vehicles.push(...randomVehicles('perp', 1, 2));
+    const perpPhoto = randomCasePhotoForGender(perpGender);
+    if (perpPhoto) {
+      stagedPhotos.push({ path: perpPhoto, targetType: 'perp', label: `Perpetrator ${payload.perp_name}` });
+    }
   }
-  payload.user_addresses = randomAddresses('user');
-  payload.user_vehicles = randomVehicles('user');
   if (!payload.warning_marker_ids) payload.warning_marker_ids = randomSubset(warningMarkerIds);
-  return payload;
+  return { payload, stagedPhotos };
 };
 
 const buildDevices = async () => {
+  await ensureCasePhotosLoaded();
   simState.devices = [];
   simState.createdCases = [];
   simState.timeouts = [];
@@ -616,7 +783,7 @@ const buildDevices = async () => {
     const location = move(base);
     const organisationId = org ? org.id : undefined;
     const deviceId = randomPhone();
-    const payload = createCasePayload(organisationId, deviceId);
+    const { payload, stagedPhotos } = createCasePayload(organisationId, deviceId);
     let created;
     try {
       created = await apiFetch('/api/cases', { method: 'POST', body: JSON.stringify(payload) });
@@ -634,6 +801,9 @@ const buildDevices = async () => {
     if (!activationCode || !caseId) {
       logSimulatorError(`Case response missing id/PIN for ${deviceId}`);
       continue;
+    }
+    if (stagedPhotos.length) {
+      await uploadCasePhotosBestEffort(caseId, stagedPhotos, deviceId);
     }
     let enroll;
     try {
@@ -870,9 +1040,9 @@ ui.loginForm.addEventListener('submit', async (event) => {
     } else {
       const geocentredCount = simState.organisations.filter((org) => !!getOrganisationGeoCenter(org)).length;
       if (pendingEntries.length) {
-        ui.loginStatus.textContent = `Authenticated (${pendingEntries.length} persisted case(s) pending cleanup, ${geocentredCount}/${simState.organisations.length} org geocenters)`;
+        ui.loginStatus.textContent = `Authenticated (${pendingEntries.length} persisted case(s) pending cleanup, ${geocentredCount}/${simState.organisations.length} org geocenters, ${photoInventorySummary()})`;
       } else {
-        ui.loginStatus.textContent = `Authenticated (${geocentredCount}/${simState.organisations.length} org geocenters)`;
+        ui.loginStatus.textContent = `Authenticated (${geocentredCount}/${simState.organisations.length} org geocenters, ${photoInventorySummary()})`;
       }
       if (geocentredCount === 0 && simState.organisations.length) {
         console.warn('No organisation geocenters found. Sample org payload:', simState.organisations[0]);
