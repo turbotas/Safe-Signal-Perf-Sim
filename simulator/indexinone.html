@@ -264,6 +264,46 @@ const lastNames = ['O’Brien','Murphy','Kelly','McCarthy','Walsh','Byrne','Sull
 const officerNames = ['Sergeant Hynes','DS Murray','Inspector Stratton','PC Avery','Lieutenant Fisher','Supt. Blake'];
 const mapLabels = ['PerfSim','SafeSignal','Control','OpsBeat'];
 const languages = ['en-GB','cy-GB','gd-GB','ga-IE'];
+
+// Master data fetched from server
+let masterData = {
+  genders: [],
+  languages: [],
+  riskCategories: [],
+  disabilities: [],
+  warningMarkers: []
+};
+
+const fetchMasterData = async () => {
+  try {
+    console.info('Fetching master data...');
+    const [genders, languages] = await Promise.all([
+      apiFetch('/api/master/genders'),
+      apiFetch('/api/languages?for_case=true')
+    ]);
+    masterData.genders = Array.isArray(genders) ? genders : [];
+    masterData.languages = Array.isArray(languages) ? languages : [];
+    console.info(`Master data loaded: ${masterData.genders.length} genders, ${masterData.languages.length} case languages`);
+  } catch (err) {
+    console.warn('Failed to load master data, using fallbacks', err);
+    logSimulatorError(`Failed to load master data: ${err.message}`);
+    // Fallback values if server queries fail
+    masterData.genders = [{ name: 'Female' }, { name: 'Male' }];
+    masterData.languages = [{ code: 'en-GB' }];
+  }
+};
+
+const getRandomGender = () => {
+  if (masterData.genders.length === 0) return 'Female';
+  const genderObj = getRandom(masterData.genders);
+  return genderObj.name || 'Female';
+};
+
+const getRandomLanguage = () => {
+  if (masterData.languages.length === 0) return 'en-GB';
+  const langObj = getRandom(masterData.languages);
+  return langObj.code || 'en-GB';
+};
 let simState = { running: false, devices: [], stats: { total:0, active:0, errors:0 }, organisations: [], timeouts: [], createdCases: [], failedTeardowns: [], errorLog: [] };
 let isAuthenticated = false;
 const clusters = [
@@ -297,7 +337,7 @@ const clusters = [
 ];
 const osTypes = ['Android','Apple'];
 const getRandom = (arr) => arr[Math.floor(Math.random()*arr.length)];
-const pickGender = () => (Math.random() < 0.9 ? 'Female' : 'Male');
+const pickGender = () => getRandomGender();
 const pickName = (gender) => gender === 'Female' ? getRandom(femaleNames) : getRandom(maleNames);
 const sanitizeForEmail = (value) => value.replace(/[^a-zA-Z]/g, '').toLowerCase();
 const randomEmail = (first, last) => `${sanitizeForEmail(first)}.${sanitizeForEmail(last)}@perfsim.local`;
@@ -695,6 +735,20 @@ const randomVehicleRegistration = () => {
   const randDigit = () => Math.floor(Math.random() * 10);
   return `${randLetter()}${randLetter()}${randDigit()}${randDigit()} ${randLetter()}${randLetter()}${randLetter()}`;
 };
+const ukPostcodeAreas = ['AL','B','BA','BB','BD','BH','BL','BN','BR','BS','BT','CA','CB','CF','CH','CM','CO','CR','CT','CV','CW','DA','DD','DE','DG','DH','DL','DN','DT','DY','E','EC','EH','EN','EX','FK','FY','G','GL','GU','HA','HD','HG','HP','HR','HS','HU','HX','IG','IP','IV','KA','KT','KW','KY','L','LA','LD','LE','LL','LN','LS','LU','M','ME','MK','ML','N','NE','NG','NN','NP','NR','NW','OL','OX','PA','PE','PH','PL','PO','PR','RG','RH','RM','S','SA','SE','SG','SK','SL','SM','SN','SO','SP','SR','SS','ST','SW','SY','TA','TD','TF','TN','TQ','TR','TS','TW','UB','W','WA','WC','WD','WF','WN','WR','WS','WV','YO','ZE'];
+const validInwardLetters = 'ABDEFGHJLNPQRSTUWXYZ';
+const randomPostcode = () => {
+  const area = ukPostcodeAreas[Math.floor(Math.random() * ukPostcodeAreas.length)];
+  const digit1 = Math.floor(Math.random() * 10);
+  const digit2 = Math.floor(Math.random() * 10);
+  const l1 = validInwardLetters[Math.floor(Math.random() * validInwardLetters.length)];
+  const l2 = validInwardLetters[Math.floor(Math.random() * validInwardLetters.length)];
+  const inward = `${digit2}${l1}${l2}`;
+  if (area.length === 1 || Math.random() < 0.6) {
+    return `${area}${digit1} ${inward}`;
+  }
+  return `${area}${digit1}${digit2} ${inward}`;
+};
 const randomAddresses = (targetType) => {
   const count = Math.ceil(Math.random()*2);
   return Array.from({length: count}, () => ({
@@ -702,7 +756,7 @@ const randomAddresses = (targetType) => {
     label: `${targetType} Address`,
     address_line1: `${Math.floor(Math.random()*200)} ${randomSpreadPick(streets)}`,
     city: randomSpreadPick(towns),
-    postcode: `${Math.floor(10 + Math.random()*90)}SW${Math.floor(1 + Math.random()*9)}`
+    postcode: randomPostcode()
   }));
 };
 const randomVehicles = (targetType, minCount = 0, maxCount = 2) => {
@@ -740,7 +794,7 @@ const createCasePayload = (organisation_id, deviceId) => {
     map_label: `${getRandom(mapLabels)}-${Math.floor(Math.random()*500)}`,
     os_type: getRandom(osTypes),
     status: 'Open',
-    language_code: getRandom(languages),
+    language_code: getRandomLanguage(),
     review_date,
     risk_category_ids: randomSubset(riskCategoryIds),
     disability_ids: randomSubset(disabilityIds),
@@ -758,7 +812,7 @@ const createCasePayload = (organisation_id, deviceId) => {
     payload.perp_name = `${pickName(perpGender)} ${getRandom(lastNames)}`;
     payload.perp_gender = perpGender;
     payload.perp_dob = randomDob();
-    payload.perp_pnd_id = `PND-${Math.floor(100000 + Math.random()*899999)}`;
+    payload.perp_pnc_id = `PNC-${Math.floor(100000 + Math.random()*899999)}`;
     payload.perp_court_order = `Bail Order ${Math.floor(Math.random()*900)+100}`;
     payload.warning_marker_ids = randomSubset(warningMarkerIds);
     addresses.push(...randomAddresses('perp'));
@@ -1033,17 +1087,24 @@ ui.loginForm.addEventListener('submit', async (event) => {
         simState.organisations = [{ id: current.organisation_id, name: 'Default Org' }];
       }
     }
+
+    // Load master data (genders, languages, etc.)
+    await fetchMasterData();
+    console.info(`Status update - orgs: ${simState.organisations.length}, genders: ${masterData.genders.length}, langs: ${masterData.languages.length}`);
     if (!simState.organisations.length) {
       ui.loginStatus.textContent = 'No accessible organisations';
       isAuthenticated = false;
       ui.start.disabled = true;
     } else {
       const geocentredCount = simState.organisations.filter((org) => !!getOrganisationGeoCenter(org)).length;
-      if (pendingEntries.length) {
-        ui.loginStatus.textContent = `Authenticated (${pendingEntries.length} persisted case(s) pending cleanup, ${geocentredCount}/${simState.organisations.length} org geocenters, ${photoInventorySummary()})`;
-      } else {
-        ui.loginStatus.textContent = `Authenticated (${geocentredCount}/${simState.organisations.length} org geocenters, ${photoInventorySummary()})`;
-      }
+      const genderCount = masterData.genders.length;
+      const langCount = masterData.languages.length;
+      const masterDataSummary = `${genderCount} genders, ${langCount} langs`;
+      const statusText = pendingEntries.length 
+        ? `Authenticated (${pendingEntries.length} persisted case(s) pending cleanup, ${geocentredCount}/${simState.organisations.length} org geocenters, ${photoInventorySummary()}, ${masterDataSummary})`
+        : `Authenticated (${geocentredCount}/${simState.organisations.length} org geocenters, ${photoInventorySummary()}, ${masterDataSummary})`;
+      console.info('Setting status:', statusText);
+      ui.loginStatus.textContent = statusText;
       if (geocentredCount === 0 && simState.organisations.length) {
         console.warn('No organisation geocenters found. Sample org payload:', simState.organisations[0]);
         logSimulatorError('No organisation geocenters detected; using fallback random clusters.');
