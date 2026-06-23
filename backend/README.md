@@ -37,6 +37,10 @@ This verifies app boot and health endpoint wiring.
 - `POST /api/sim/auth/login`
 - `POST /api/sim/auth/logout`
 - `GET /api/sim/auth/me`
+- `GET/POST /api/sim/users`
+- `PATCH /api/sim/users/{id}`
+- `POST /api/sim/users/{id}/reset-password`
+- `DELETE /api/sim/users/{id}`
 - `GET/POST/PATCH/DELETE /api/sim/environments`
 - `POST /api/sim/environments/{id}/test-auth`
 - `POST /api/sim/environments/{id}/2fa/submit`
@@ -60,3 +64,11 @@ This verifies app boot and health endpoint wiring.
 - Teardown now attempts close -> archive -> delete (or archive-only depending on profile teardown mode).
 - Teardown retries use backoff and can mark runs `action_required` when environment auth blocks cleanup.
 - Runs track basic API performance counters (`api_calls_total`, failed count, avg ms, last ms).
+
+## Console capabilities (current)
+
+- Simulator user management: add, disable/enable, reset password, delete
+- Environment management: add/edit/delete, auth test, session state light
+- Profile management: full timing/activation parameters, edit/delete
+- Run management: start from selected profile, scale, stop/resume/delete, profile visibility
+- Run details: case reference display, event stream, alert/update indicator lights

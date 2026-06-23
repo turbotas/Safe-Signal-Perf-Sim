@@ -52,14 +52,22 @@
     .profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-bottom: 8px; }
     .field { display: flex; flex-direction: column; gap: 4px; }
     .field label { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+    .checkline { display: inline-flex; align-items: center; gap: 6px; font-size: 0.86rem; color: var(--muted); }
     #messages { white-space: pre-wrap; min-height: 40px; }
+    .hidden { display: none !important; }
     #run-table { min-width: 900px; }
     #profile-table { min-width: 1000px; }
-    .light { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-    .light.green { background: #2b7a0b; }
-    .light.red { background: #b02a37; }
+    .light { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-right: 6px; vertical-align: middle; box-shadow: 0 0 0 1px rgba(0,0,0,0.1); }
+    .light.green { background: #14a800; }
+    .light.red { background: #ff2d2d; }
     .light.amber { background: #b57600; }
+    .light.off { background: #adb5bd; }
+    .light.flash { animation: trafficPulse 1.1s ease-in-out infinite; box-shadow: 0 0 0 1px rgba(0,0,0,0.1), 0 0 10px rgba(255,255,255,0.95); }
     .status-chip { display: inline-flex; align-items: center; gap: 6px; }
+    @keyframes trafficPulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.32); opacity: 0.75; }
+    }
   </style>
 </head>
 <body>
@@ -81,7 +89,24 @@
       <div id="messages" class="tiny"></div>
     </div>
 
+    <div id="authed-sections" class="hidden">
     <div class="grid" style="margin-top:12px;">
+      <section class="panel">
+        <h2>Simulator Users</h2>
+        <form id="user-form">
+          <div class="row">
+            <input id="user-email" type="email" placeholder="user@example.com" required>
+            <input id="user-password" type="password" placeholder="Initial password" required>
+            <label class="checkline"><input id="user-active" type="checkbox" checked>Active</label>
+            <button type="submit">Add User</button>
+          </div>
+          <div class="tiny">User management requires an admin account.</div>
+        </form>
+        <div class="table-wrap">
+          <table id="user-table"></table>
+        </div>
+      </section>
+
       <section class="panel">
         <h2>Environments</h2>
         <form id="env-form">
@@ -198,10 +223,11 @@
         </div>
       </section>
     </div>
+    </div>
   </div>
 
   <script>
-    const state = { envs: [], profiles: [], runs: [], selectedRunId: null, authed: false };
+    const state = { users: [], envs: [], profiles: [], runs: [], selectedRunId: null, authed: false };
 
     const el = (id) => document.getElementById(id);
     const setMsg = (msg, cls = "") => {
@@ -248,6 +274,38 @@
       return "amber";
     }
 
+    function caseRecentlyUpdated(caseRow) {
+      if (!caseRow.last_update_at) return "off";
+      const updatedAt = new Date(caseRow.last_update_at).getTime();
+      if (!Number.isFinite(updatedAt)) return "off";
+      return (Date.now() - updatedAt) <= 12000;
+    }
+
+    function setAuthenticatedView(isAuthed) {
+      const sections = el("authed-sections");
+      if (!sections) return;
+      if (isAuthed) {
+        sections.classList.remove("hidden");
+      } else {
+        sections.classList.add("hidden");
+      }
+    }
+
+    function clearAuthedState() {
+      state.users = [];
+      state.envs = [];
+      state.profiles = [];
+      state.runs = [];
+      state.selectedRunId = null;
+      renderUsers();
+      renderEnvs();
+      renderProfiles();
+      renderRuns();
+      el("case-table").innerHTML = "";
+      el("event-table").innerHTML = "";
+      el("run-selected").textContent = "Select a run to inspect.";
+    }
+
     function renderEnvs() {
       const table = el("env-table");
       if (!state.envs.length) {
@@ -259,7 +317,7 @@
           <td>${e.name}</td>
           <td class='mono env-url' title='${e.base_url}'>${e.base_url}</td>
           <td>${e.api_username}</td>
-          <td><span class='status-chip'><span class='light ${envSessionLight(e)}'></span>${e.auth_session_state || "unknown"}</span></td>
+          <td><span class='status-chip'><span class='light ${envSessionLight(e)}' title='${envSessionLight(e).toUpperCase()} session state'></span>${e.auth_session_state || "unknown"}</span></td>
           <td>${e.last_auth_error ? `<span class='status-err'>${e.last_auth_error}</span>` : `<span class='status-ok'>ok/unknown</span>`}</td>
           <td class='actions-col'>
             <div class='action-group'>
@@ -313,6 +371,82 @@
             await refreshEnvs();
           } catch (err) {
             setMsg(`Delete environment failed: ${err.message}`, "status-err");
+          }
+        });
+      });
+    }
+
+    function renderUsers() {
+      const table = el("user-table");
+      if (!state.users.length) {
+        table.innerHTML = "<tr><td class='tiny'>No users loaded (admin required).</td></tr>";
+        return;
+      }
+      table.innerHTML = "<tr><th>Email</th><th>Active</th><th>Admin</th><th>Last Login</th><th></th></tr>" +
+        state.users.map((u) => `<tr>
+          <td>${u.email}</td>
+          <td>${u.is_active ? "Yes" : "No"}</td>
+          <td>${u.is_admin ? "Yes" : "No"}</td>
+          <td class='tiny'>${u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "-"}</td>
+          <td class='actions-col'>
+            <div class='action-group'>
+              <button data-reset-user='${u.id}' class='secondary' type='button'>Reset Password</button>
+              <button data-toggle-user='${u.id}' class='warn' type='button'>${u.is_active ? "Disable" : "Enable"}</button>
+              <button data-delete-user='${u.id}' class='danger' type='button'>Delete</button>
+            </div>
+          </td>
+        </tr>`).join("");
+
+      table.querySelectorAll("button[data-reset-user]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const userId = Number(button.dataset.resetUser);
+          const user = state.users.find((u) => u.id === userId);
+          if (!user) return;
+          const nextPassword = window.prompt(`Enter new password for ${user.email}`);
+          if (!nextPassword) return;
+          try {
+            await api(`/api/sim/users/${userId}/reset-password`, {
+              method: "POST",
+              body: JSON.stringify({ password: nextPassword })
+            });
+            setMsg(`Password reset for ${user.email}`, "status-ok");
+          } catch (err) {
+            setMsg(`Password reset failed: ${err.message}`, "status-err");
+          }
+        });
+      });
+
+      table.querySelectorAll("button[data-toggle-user]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const userId = Number(button.dataset.toggleUser);
+          const user = state.users.find((u) => u.id === userId);
+          if (!user) return;
+          try {
+            await api(`/api/sim/users/${userId}`, {
+              method: "PATCH",
+              body: JSON.stringify({ is_active: !user.is_active })
+            });
+            await refreshUsers();
+            setMsg(`User ${user.email} ${user.is_active ? "disabled" : "enabled"}`, "status-ok");
+          } catch (err) {
+            setMsg(`User update failed: ${err.message}`, "status-err");
+          }
+        });
+      });
+
+      table.querySelectorAll("button[data-delete-user]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const userId = Number(button.dataset.deleteUser);
+          const user = state.users.find((u) => u.id === userId);
+          if (!user) return;
+          const ok = window.confirm(`Delete user '${user.email}'?`);
+          if (!ok) return;
+          try {
+            await api(`/api/sim/users/${userId}`, { method: "DELETE" });
+            await refreshUsers();
+            setMsg(`User ${user.email} deleted`, "status-ok");
+          } catch (err) {
+            setMsg(`Delete user failed: ${err.message}`, "status-err");
           }
         });
       });
@@ -426,14 +560,17 @@
         table.innerHTML = "<tr><td class='tiny'>No runs yet.</td></tr>";
         return;
       }
-      table.innerHTML = "<tr><th>ID</th><th>Status</th><th>Environment</th><th>Desired</th><th>Active</th><th>API</th><th>Fail</th><th>Avg (ms)</th><th>Last (ms)</th><th>Actions</th></tr>" +
+      table.innerHTML = "<tr><th>ID</th><th>Status</th><th>Environment</th><th>Profile</th><th>Desired</th><th>Active</th><th>API</th><th>Fail</th><th>Avg (ms)</th><th>Last (ms)</th><th>Actions</th></tr>" +
         state.runs.map((r) => {
           const env = state.envs.find((e) => e.id === r.environment_id);
           const envLabel = env ? env.name : `#${r.environment_id}`;
+          const profile = state.profiles.find((p) => p.id === r.profile_id);
+          const profileLabel = profile ? profile.name : (r.profile_id ? `#${r.profile_id}` : "-");
           return `<tr>
           <td>${r.id}</td>
-          <td><span class='status-chip'><span class='light ${runStatusColor(r.status)}'></span><span class='badge'>${r.status}</span></span></td>
+          <td><span class='status-chip'><span class='light ${runStatusColor(r.status)}' title='${runStatusColor(r.status).toUpperCase()} run state'></span><span class='badge'>${r.status}</span></span></td>
           <td>${envLabel}</td>
+          <td>${profileLabel}</td>
           <td>${r.desired_case_count}</td>
           <td>${r.active_case_count}</td>
           <td>${r.api_calls_total ?? 0}</td>
@@ -499,8 +636,17 @@
           api(`/api/sim/runs/${state.selectedRunId}/cases`),
           api(`/api/sim/runs/${state.selectedRunId}/events`)
         ]);
-        el("case-table").innerHTML = "<tr><th>Case Ref</th><th>Case ID</th><th>State</th><th>Alert</th><th>Prov</th><th>Tear</th><th>Last Error</th></tr>" +
-          cases.slice(0, 60).map((c) => `<tr><td class='mono'>${c.case_reference || "(pending)"}</td><td class='mono'>${c.safe_signal_case_id || "(pending)"}</td><td>${c.state}</td><td><span class='light ${caseAlertLight(c)}'></span></td><td>${c.provision_attempts || 0}</td><td>${c.teardown_attempts || 0}</td><td class='tiny'>${c.last_error || ""}</td></tr>`).join("");
+        el("case-table").innerHTML = "<tr><th>Case Reference</th><th>State</th><th>Alert</th><th>Prov</th><th>Tear</th><th>Last Error</th></tr>" +
+          cases.slice(0, 60).map((c) => {
+            const alertColor = caseAlertLight(c);
+            const recent = caseRecentlyUpdated(c);
+            const lightClass = recent ? `${alertColor} flash` : alertColor;
+            const lightTitle = recent
+              ? `${alertColor.toUpperCase()} flashing: status update sent recently`
+              : `${alertColor.toUpperCase()} alert state`;
+            const reference = c.case_reference ? `Case ${c.case_reference}` : "(pending server reference)";
+            return `<tr><td class='mono'>${reference}</td><td>${c.state}</td><td><span class='light ${lightClass}' title='${lightTitle}'></span></td><td>${c.provision_attempts || 0}</td><td>${c.teardown_attempts || 0}</td><td class='tiny'>${c.last_error || ""}</td></tr>`;
+          }).join("");
         el("event-table").innerHTML = "<tr><th>When</th><th>Level</th><th>Type</th><th>Message</th><th>Payload</th></tr>" +
           events.slice(0, 80).map((ev) => `<tr><td class='tiny'>${new Date(ev.created_at).toLocaleTimeString()}</td><td>${ev.level}</td><td>${ev.event_type}</td><td>${ev.message}</td><td class='tiny'>${ev.payload || ""}</td></tr>`).join("");
       } catch (err) {
@@ -513,20 +659,33 @@
         const me = await api("/api/sim/auth/me");
         state.authed = true;
         el("me-status").textContent = `Authenticated as ${me.user.email}`;
+        setAuthenticatedView(true);
       } catch (_) {
         state.authed = false;
         el("me-status").textContent = "Not authenticated";
+        setAuthenticatedView(false);
       }
     }
 
+    async function refreshUsers() {
+      try {
+        state.users = await api("/api/sim/users");
+      } catch (_) {
+        state.users = [];
+      }
+      renderUsers();
+    }
     async function refreshEnvs() { state.envs = await api("/api/sim/environments"); renderEnvs(); renderRunSelectors(); }
     async function refreshProfiles() { state.profiles = await api("/api/sim/profiles"); renderProfiles(); renderRunSelectors(); }
     async function refreshRuns() { state.runs = await api("/api/sim/runs"); renderRuns(); }
 
     async function refreshAll() {
       await refreshMe();
-      if (!state.authed) return;
-      await Promise.all([refreshEnvs(), refreshProfiles()]);
+      if (!state.authed) {
+        clearAuthedState();
+        return;
+      }
+      await Promise.all([refreshUsers(), refreshEnvs(), refreshProfiles()]);
       await refreshRuns();
       await refreshSelected();
     }
@@ -553,6 +712,27 @@
       await refreshAll();
     });
     el("btn-me").addEventListener("click", refreshAll);
+
+    el("user-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        await api("/api/sim/users", {
+          method: "POST",
+          body: JSON.stringify({
+            email: el("user-email").value,
+            password: el("user-password").value,
+            is_active: el("user-active").checked,
+            is_admin: true
+          })
+        });
+        el("user-form").reset();
+        el("user-active").checked = true;
+        setMsg("User created", "status-ok");
+        await refreshUsers();
+      } catch (err) {
+        setMsg(`Create user failed: ${err.message}`, "status-err");
+      }
+    });
 
     el("env-form").addEventListener("submit", async (event) => {
       event.preventDefault();

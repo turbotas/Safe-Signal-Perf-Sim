@@ -124,7 +124,7 @@ def stop_run(run_id: int, db: Session = Depends(get_db), _: User = Depends(get_c
     if run.status == "stopped":
         return run
 
-    active_states = ("active", "provisioning", "provision_failed")
+    active_states = ("active", "active_alert", "provisioning", "provision_failed")
     cases = db.execute(select(RunCase).where(RunCase.run_id == run.id).where(RunCase.state.in_(active_states))).scalars().all()
     for case in cases:
         case.state = "teardown_pending"
