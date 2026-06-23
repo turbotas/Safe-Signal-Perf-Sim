@@ -2,6 +2,11 @@
 
 A browser-based load-testing and simulation tool for the Safe Signal platform. It creates synthetic cases and enrolled devices, then simulates GPS and telemetry updates at configurable intervals.
 
+## Additional Documentation
+
+- [Hosted Simulator Build Spec (v1)](./Hosted%20Simulator%20Build%20Spec.md)
+- [Backend Phase 1 Quick Start](../backend/README.md)
+
 ## What It Does
 
 The simulator authenticates against a Safe Signal backend, creates cases with realistic-looking data, enrolls a device against each case, and then drives location / activation / battery updates via the mobile-device telemetry API.

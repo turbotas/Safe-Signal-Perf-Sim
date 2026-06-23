@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulator Console</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --panel: #ffffff;
+      --text: #1d2a35;
+      --muted: #627181;
+      --accent: #0b7285;
+      --accent-2: #155d93;
+      --danger: #b02a37;
+      --warn: #915f00;
+      --ok: #2b7a0b;
+      --border: #d7dde3;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; background: linear-gradient(140deg, #eff4f8, #f9fbfc); color: var(--text); }
+    .page { max-width: 1400px; margin: 0 auto; padding: 20px; }
+    h1 { margin: 0 0 12px; }
+    h2 { margin: 0 0 10px; font-size: 1.05rem; }
+    p { margin: 4px 0; color: var(--muted); }
+    .grid { display: block; }
+    .grid > .panel { margin-bottom: 14px; }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.06); }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; }
+    .login-row { align-items: flex-start; }
+    input, select, button, textarea { border: 1px solid var(--border); border-radius: 6px; padding: 8px; font: inherit; }
+    input, select { min-width: 120px; }
+    button { background: var(--accent); color: #fff; border: 0; cursor: pointer; }
+    button.secondary { background: var(--accent-2); }
+    button.warn { background: var(--warn); }
+    button.danger { background: var(--danger); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .table-wrap { width: 100%; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.92rem; min-width: 760px; }
+    th, td { text-align: left; border-bottom: 1px solid var(--border); padding: 6px; vertical-align: top; }
+    td.actions-col { min-width: 240px; }
+    .action-group { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-start; }
+    .action-group button { margin: 0; padding: 6px 10px; font-size: 0.88rem; }
+    .env-url { max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #e9f4f6; color: #0f5360; font-size: 0.8rem; }
+    .status-ok { color: var(--ok); }
+    .status-err { color: var(--danger); }
+    .status-warn { color: var(--warn); }
+    .mono { font-family: Consolas, monospace; font-size: 0.9rem; }
+    .tiny { font-size: 0.8rem; color: var(--muted); }
+    .split { display: grid; grid-template-columns: 1fr; gap: 10px; }
+    .profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px; margin-bottom: 8px; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+    #messages { white-space: pre-wrap; min-height: 40px; }
+    #run-table { min-width: 900px; }
+    #profile-table { min-width: 1000px; }
+    .light { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+    .light.green { background: #2b7a0b; }
+    .light.red { background: #b02a37; }
+    .light.amber { background: #b57600; }
+    .status-chip { display: inline-flex; align-items: center; gap: 6px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Safe Signal Simulator Console</h1>
+    <p>Hosted console for auth, environments, profiles, runs, and run state inspection.</p>
+
+    <div class="panel" style="margin-top:10px;">
+      <div class="row login-row">
+        <form id="login-form" class="row">
+          <input id="login-email" type="email" placeholder="admin@perfsim.local" required>
+          <input id="login-password" type="password" placeholder="Password" required>
+          <button type="submit">Login</button>
+        </form>
+        <button id="btn-me" class="secondary" type="button">Refresh Me</button>
+        <button id="btn-logout" class="warn" type="button">Logout</button>
+        <span id="me-status" class="badge">Not authenticated</span>
+      </div>
+      <div id="messages" class="tiny"></div>
+    </div>
+
+    <div class="grid" style="margin-top:12px;">
+      <section class="panel">
+        <h2>Environments</h2>
+        <form id="env-form">
+          <input id="env-id" type="hidden">
+          <div class="row">
+            <input id="env-name" placeholder="Name" required>
+            <input id="env-base" placeholder="https://api.example.com" required>
+          </div>
+          <div class="row">
+            <input id="env-user" placeholder="API Username" required>
+            <input id="env-pass" type="password" placeholder="API Password (required for create, optional for edit)">
+            <select id="env-mode">
+              <option value="auto_detect">auto_detect</option>
+              <option value="password_only">password_only</option>
+              <option value="password_plus_2fa">password_plus_2fa</option>
+            </select>
+            <button id="env-submit" type="submit">Add Environment</button>
+            <button id="env-cancel" class="secondary" type="button" style="display:none;">Cancel Edit</button>
+          </div>
+        </form>
+        <div class="table-wrap">
+          <table id="env-table"></table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Profiles</h2>
+        <form id="profile-form">
+          <input id="profile-id" type="hidden">
+          <div class="profile-grid">
+            <div class="field">
+              <label for="profile-name">Profile Name</label>
+              <input id="profile-name" placeholder="Standard" required>
+            </div>
+            <div class="field">
+              <label for="profile-count">Device Count</label>
+              <input id="profile-count" type="number" value="200" min="1" max="10000">
+            </div>
+            <div class="field">
+              <label for="profile-min-mins">Normal Update Min (mins)</label>
+              <input id="profile-min-mins" type="number" value="30" min="1" max="1440">
+            </div>
+            <div class="field">
+              <label for="profile-max-mins">Normal Update Max (mins)</label>
+              <input id="profile-max-mins" type="number" value="60" min="1" max="1440">
+            </div>
+            <div class="field">
+              <label for="profile-active-ratio">Active Ratio (%)</label>
+              <input id="profile-active-ratio" type="number" value="3" min="0" max="100" step="0.1">
+            </div>
+            <div class="field">
+              <label for="profile-active-int-sec">Activation Interval (sec)</label>
+              <input id="profile-active-int-sec" type="number" value="30" min="1" max="3600">
+            </div>
+            <div class="field">
+              <label for="profile-active-dur-mins">Active Duration (mins)</label>
+              <input id="profile-active-dur-mins" type="number" value="15" min="1" max="1440">
+            </div>
+            <div class="field">
+              <label for="profile-delay-ms">Case Creation Delay (ms)</label>
+              <input id="profile-delay-ms" type="number" value="0" min="0" max="10000" step="50">
+            </div>
+            <div class="field">
+              <label for="profile-teardown">Teardown Mode</label>
+              <select id="profile-teardown">
+                <option value="delete" selected>Delete (default)</option>
+                <option value="archive">Archive</option>
+              </select>
+            </div>
+          </div>
+          <div class="row">
+            <button id="profile-submit" type="submit">Add Profile</button>
+            <button id="profile-cancel" class="secondary" type="button" style="display:none;">Cancel Edit</button>
+          </div>
+          <div class="tiny">Profiles control frequency and behavior per run. Different profiles can run at the same time on different environments.</div>
+        </form>
+        <div class="table-wrap">
+          <table id="profile-table"></table>
+        </div>
+      </section>
+    </div>
+
+    <div class="grid" style="margin-top:12px;">
+      <section class="panel">
+        <h2>Runs</h2>
+        <form id="run-form">
+          <div class="row">
+            <select id="run-env" required></select>
+            <select id="run-profile" required></select>
+            <button type="submit">Start Run</button>
+          </div>
+        </form>
+        <div class="table-wrap">
+          <table id="run-table"></table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Run Details</h2>
+        <div id="run-selected" class="tiny">Select a run to inspect.</div>
+        <div class="split" style="margin-top:8px;">
+          <div>
+            <h2 style="font-size:0.95rem;">Cases</h2>
+            <div class="table-wrap">
+              <table id="case-table"></table>
+            </div>
+          </div>
+          <div>
+            <h2 style="font-size:0.95rem;">Events</h2>
+            <div class="table-wrap">
+              <table id="event-table"></table>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const state = { envs: [], profiles: [], runs: [], selectedRunId: null, authed: false };
+
+    const el = (id) => document.getElementById(id);
+    const setMsg = (msg, cls = "") => {
+      const m = el("messages");
+      m.className = cls || "tiny";
+      m.textContent = msg;
+    };
+
+    async function api(path, options = {}) {
+      const headers = { ...(options.headers || {}) };
+      if (options.body && !headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
+      }
+      const res = await fetch(path, { credentials: "include", ...options, headers });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try {
+          const payload = await res.json();
+          if (payload.detail) detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail);
+        } catch (_) {}
+        throw new Error(detail);
+      }
+      if (res.status === 204) return null;
+      return res.json();
+    }
+
+    function runStatusColor(status) {
+      if (status === "running") return "green";
+      if (status === "stopped" || status === "error") return "red";
+      return "amber";
+    }
+
+    function envSessionLight(env) {
+      if (env.auth_session_state === "valid") return "green";
+      if (env.auth_session_state === "failed") return "red";
+      if (env.auth_session_state === "challenge_required") return "amber";
+      if (env.last_auth_ok_at) return "green";
+      return "amber";
+    }
+
+    function caseAlertLight(caseRow) {
+      if (caseRow.state === "active_alert") return "red";
+      if (caseRow.state === "active") return "green";
+      return "amber";
+    }
+
+    function renderEnvs() {
+      const table = el("env-table");
+      if (!state.envs.length) {
+        table.innerHTML = "<tr><td class='tiny'>No environments yet.</td></tr>";
+        return;
+      }
+      table.innerHTML = "<tr><th>Name</th><th>Base URL</th><th>User</th><th>Session</th><th>Auth</th><th></th></tr>" +
+        state.envs.map((e) => `<tr>
+          <td>${e.name}</td>
+          <td class='mono env-url' title='${e.base_url}'>${e.base_url}</td>
+          <td>${e.api_username}</td>
+          <td><span class='status-chip'><span class='light ${envSessionLight(e)}'></span>${e.auth_session_state || "unknown"}</span></td>
+          <td>${e.last_auth_error ? `<span class='status-err'>${e.last_auth_error}</span>` : `<span class='status-ok'>ok/unknown</span>`}</td>
+          <td class='actions-col'>
+            <div class='action-group'>
+            <button data-auth='${e.id}' class='secondary' type='button'>Test Auth</button>
+            <button data-edit='${e.id}' class='secondary' type='button'>Edit</button>
+            <button data-delete='${e.id}' class='danger' type='button'>Delete</button>
+            </div>
+          </td>
+        </tr>`).join("");
+
+      table.querySelectorAll("button[data-auth]").forEach((b) => {
+        b.addEventListener("click", async () => {
+          try {
+            const out = await api(`/api/sim/environments/${b.dataset.auth}/test-auth`, { method: "POST" });
+            setMsg(`Environment auth: ${out.status} - ${out.message}`, out.challenge_required ? "status-warn" : "status-ok");
+            await refreshEnvs();
+          } catch (err) {
+            setMsg(`Auth test failed: ${err.message}`, "status-err");
+          }
+        });
+      });
+      table.querySelectorAll("button[data-edit]").forEach((b) => {
+        b.addEventListener("click", () => {
+          const envId = Number(b.dataset.edit);
+          const env = state.envs.find((entry) => entry.id === envId);
+          if (!env) return;
+          el("env-id").value = String(env.id);
+          el("env-name").value = env.name;
+          el("env-base").value = env.base_url;
+          el("env-user").value = env.api_username;
+          el("env-mode").value = env.auth_mode;
+          el("env-pass").value = "";
+          el("env-submit").textContent = "Update Environment";
+          el("env-cancel").style.display = "inline-block";
+          setMsg(`Editing environment ${env.name}. Leave password blank to keep existing.`, "status-warn");
+        });
+      });
+      table.querySelectorAll("button[data-delete]").forEach((b) => {
+        b.addEventListener("click", async () => {
+          const envId = Number(b.dataset.delete);
+          const env = state.envs.find((entry) => entry.id === envId);
+          if (!env) return;
+          const ok = window.confirm(`Delete environment '${env.name}'? This is blocked if runs already exist for it.`);
+          if (!ok) return;
+          try {
+            await api(`/api/sim/environments/${envId}`, { method: "DELETE" });
+            if (el("env-id").value === String(envId)) {
+              resetEnvForm();
+            }
+            setMsg("Environment deleted", "status-ok");
+            await refreshEnvs();
+          } catch (err) {
+            setMsg(`Delete environment failed: ${err.message}`, "status-err");
+          }
+        });
+      });
+    }
+
+    function resetEnvForm() {
+      el("env-form").reset();
+      el("env-id").value = "";
+      el("env-submit").textContent = "Add Environment";
+      el("env-cancel").style.display = "none";
+    }
+
+    function renderProfiles() {
+      const table = el("profile-table");
+      if (!state.profiles.length) {
+        table.innerHTML = "<tr><td class='tiny'>No profiles yet.</td></tr>";
+        return;
+      }
+      table.innerHTML = "<tr><th>Name</th><th>Cases</th><th>Min/Max (mins)</th><th>Active %</th><th>Interval/Dur</th><th>Delay</th><th>Teardown</th><th></th></tr>" +
+        state.profiles.map((p) => `<tr>
+          <td>${p.name}</td>
+          <td>${p.device_count_initial}</td>
+          <td>${Math.round(p.update_min_ms / 60000)}/${Math.round(p.update_max_ms / 60000)}</td>
+          <td>${(p.activation_chance * 100).toFixed(1)}</td>
+          <td>${Math.round(p.active_interval_ms / 1000)}s / ${Math.round(p.active_duration_ms / 60000)}m</td>
+          <td>${p.case_creation_delay_ms}ms</td>
+          <td>${p.teardown_mode}</td>
+          <td class='actions-col'>
+            <div class='action-group'>
+              <button data-edit-profile='${p.id}' class='secondary' type='button'>Edit</button>
+              <button data-delete-profile='${p.id}' class='danger' type='button'>Delete</button>
+            </div>
+          </td>
+        </tr>`).join("");
+
+      table.querySelectorAll("button[data-edit-profile]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const profileId = Number(button.dataset.editProfile);
+          const profile = state.profiles.find((p) => p.id === profileId);
+          if (!profile) return;
+          el("profile-id").value = String(profile.id);
+          el("profile-name").value = profile.name;
+          el("profile-count").value = String(profile.device_count_initial);
+          el("profile-min-mins").value = String(Math.round(profile.update_min_ms / 60000));
+          el("profile-max-mins").value = String(Math.round(profile.update_max_ms / 60000));
+          el("profile-active-ratio").value = String((profile.activation_chance * 100).toFixed(2));
+          el("profile-active-int-sec").value = String(Math.round(profile.active_interval_ms / 1000));
+          el("profile-active-dur-mins").value = String(Math.round(profile.active_duration_ms / 60000));
+          el("profile-delay-ms").value = String(profile.case_creation_delay_ms);
+          el("profile-teardown").value = profile.teardown_mode;
+          el("profile-submit").textContent = "Update Profile";
+          el("profile-cancel").style.display = "inline-block";
+          setMsg(`Editing profile ${profile.name}`, "status-warn");
+        });
+      });
+
+      table.querySelectorAll("button[data-delete-profile]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const profileId = Number(button.dataset.deleteProfile);
+          const profile = state.profiles.find((p) => p.id === profileId);
+          if (!profile) return;
+          const ok = window.confirm(`Delete profile '${profile.name}'?`);
+          if (!ok) return;
+          try {
+            await api(`/api/sim/profiles/${profileId}`, { method: "DELETE" });
+            if (el("profile-id").value === String(profileId)) {
+              resetProfileForm();
+            }
+            setMsg("Profile deleted", "status-ok");
+            await refreshProfiles();
+          } catch (err) {
+            setMsg(`Delete profile failed: ${err.message}`, "status-err");
+          }
+        });
+      });
+    }
+
+    function resetProfileForm() {
+      el("profile-form").reset();
+      el("profile-id").value = "";
+      el("profile-min-mins").value = "30";
+      el("profile-max-mins").value = "60";
+      el("profile-active-ratio").value = "3";
+      el("profile-active-int-sec").value = "30";
+      el("profile-active-dur-mins").value = "15";
+      el("profile-delay-ms").value = "0";
+      el("profile-teardown").value = "delete";
+      el("profile-submit").textContent = "Add Profile";
+      el("profile-cancel").style.display = "none";
+    }
+
+    function renderRunSelectors() {
+      const envSel = el("run-env");
+      const profileSel = el("run-profile");
+      const currentEnv = envSel.value;
+      const currentProfile = profileSel.value;
+      envSel.innerHTML = state.envs.map((e) => `<option value='${e.id}'>${e.name}</option>`).join("");
+      profileSel.innerHTML = "<option value='' disabled selected>Select profile</option>" +
+        state.profiles.map((p) => `<option value='${p.id}'>${p.name}</option>`).join("");
+      if (currentEnv && state.envs.some((e) => String(e.id) === currentEnv)) {
+        envSel.value = currentEnv;
+      }
+      if (currentProfile && state.profiles.some((p) => String(p.id) === currentProfile)) {
+        profileSel.value = currentProfile;
+      }
+    }
+
+    function renderRuns() {
+      const table = el("run-table");
+      if (!state.runs.length) {
+        table.innerHTML = "<tr><td class='tiny'>No runs yet.</td></tr>";
+        return;
+      }
+      table.innerHTML = "<tr><th>ID</th><th>Status</th><th>Environment</th><th>Desired</th><th>Active</th><th>API</th><th>Fail</th><th>Avg (ms)</th><th>Last (ms)</th><th>Actions</th></tr>" +
+        state.runs.map((r) => {
+          const env = state.envs.find((e) => e.id === r.environment_id);
+          const envLabel = env ? env.name : `#${r.environment_id}`;
+          return `<tr>
+          <td>${r.id}</td>
+          <td><span class='status-chip'><span class='light ${runStatusColor(r.status)}'></span><span class='badge'>${r.status}</span></span></td>
+          <td>${envLabel}</td>
+          <td>${r.desired_case_count}</td>
+          <td>${r.active_case_count}</td>
+          <td>${r.api_calls_total ?? 0}</td>
+          <td>${r.api_calls_failed ?? 0}</td>
+          <td>${Number(r.api_avg_response_ms || 0).toFixed(1)}</td>
+          <td>${Number(r.api_last_response_ms || 0).toFixed(1)}</td>
+          <td class='actions-col'>
+            <div class='action-group'>
+            <button data-inspect='${r.id}' type='button'>Inspect</button>
+            <button data-plus='${r.id}' class='secondary' type='button'>+10</button>
+            <button data-minus='${r.id}' class='secondary' type='button'>-10</button>
+            <button data-stop='${r.id}' class='warn' type='button'>Stop</button>
+            <button data-resume='${r.id}' class='secondary' type='button'>Resume</button>
+            <button data-delete-run='${r.id}' class='danger' type='button'>Delete</button>
+            </div>
+          </td>
+        </tr>`;
+        }).join("");
+
+      const wire = (selector, fn) => table.querySelectorAll(selector).forEach((b) => b.addEventListener("click", fn));
+      wire("button[data-inspect]", (e) => { state.selectedRunId = Number(e.target.dataset.inspect); refreshSelected(); });
+      wire("button[data-plus]", (e) => scaleRun(Number(e.target.dataset.plus), 10));
+      wire("button[data-minus]", (e) => scaleRun(Number(e.target.dataset.minus), -10));
+      wire("button[data-stop]", (e) => mutateRun(`/api/sim/runs/${e.target.dataset.stop}/stop`, "POST"));
+      wire("button[data-resume]", (e) => mutateRun(`/api/sim/runs/${e.target.dataset.resume}/resume`, "POST"));
+      wire("button[data-delete-run]", async (e) => {
+        const runId = Number(e.target.dataset.deleteRun);
+        const ok = window.confirm(`Delete run ${runId}? Only stopped/error runs can be deleted.`);
+        if (!ok) return;
+        await mutateRun(`/api/sim/runs/${runId}`, "DELETE");
+        if (state.selectedRunId === runId) {
+          state.selectedRunId = null;
+          await refreshSelected();
+        }
+      });
+    }
+
+    async function scaleRun(runId, delta) {
+      await mutateRun(`/api/sim/runs/${runId}/scale`, "POST", { delta_cases: delta });
+    }
+
+    async function mutateRun(path, method, body) {
+      try {
+        await api(path, { method, body: body ? JSON.stringify(body) : undefined });
+        await refreshRuns();
+        if (state.selectedRunId) await refreshSelected();
+      } catch (err) {
+        setMsg(`Run action failed: ${err.message}`, "status-err");
+      }
+    }
+
+    async function refreshSelected() {
+      const out = el("run-selected");
+      if (!state.selectedRunId) {
+        out.textContent = "Select a run to inspect.";
+        el("case-table").innerHTML = "";
+        el("event-table").innerHTML = "";
+        return;
+      }
+      out.textContent = `Run ${state.selectedRunId}`;
+      try {
+        const [cases, events] = await Promise.all([
+          api(`/api/sim/runs/${state.selectedRunId}/cases`),
+          api(`/api/sim/runs/${state.selectedRunId}/events`)
+        ]);
+        el("case-table").innerHTML = "<tr><th>Case Ref</th><th>Case ID</th><th>State</th><th>Alert</th><th>Prov</th><th>Tear</th><th>Last Error</th></tr>" +
+          cases.slice(0, 60).map((c) => `<tr><td class='mono'>${c.case_reference || "(pending)"}</td><td class='mono'>${c.safe_signal_case_id || "(pending)"}</td><td>${c.state}</td><td><span class='light ${caseAlertLight(c)}'></span></td><td>${c.provision_attempts || 0}</td><td>${c.teardown_attempts || 0}</td><td class='tiny'>${c.last_error || ""}</td></tr>`).join("");
+        el("event-table").innerHTML = "<tr><th>When</th><th>Level</th><th>Type</th><th>Message</th><th>Payload</th></tr>" +
+          events.slice(0, 80).map((ev) => `<tr><td class='tiny'>${new Date(ev.created_at).toLocaleTimeString()}</td><td>${ev.level}</td><td>${ev.event_type}</td><td>${ev.message}</td><td class='tiny'>${ev.payload || ""}</td></tr>`).join("");
+      } catch (err) {
+        setMsg(`Failed loading run details: ${err.message}`, "status-err");
+      }
+    }
+
+    async function refreshMe() {
+      try {
+        const me = await api("/api/sim/auth/me");
+        state.authed = true;
+        el("me-status").textContent = `Authenticated as ${me.user.email}`;
+      } catch (_) {
+        state.authed = false;
+        el("me-status").textContent = "Not authenticated";
+      }
+    }
+
+    async function refreshEnvs() { state.envs = await api("/api/sim/environments"); renderEnvs(); renderRunSelectors(); }
+    async function refreshProfiles() { state.profiles = await api("/api/sim/profiles"); renderProfiles(); renderRunSelectors(); }
+    async function refreshRuns() { state.runs = await api("/api/sim/runs"); renderRuns(); }
+
+    async function refreshAll() {
+      await refreshMe();
+      if (!state.authed) return;
+      await Promise.all([refreshEnvs(), refreshProfiles()]);
+      await refreshRuns();
+      await refreshSelected();
+    }
+
+    el("login-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        await api("/api/sim/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email: el("login-email").value, password: el("login-password").value })
+        });
+        setMsg("Login successful", "status-ok");
+        await refreshAll();
+      } catch (err) {
+        setMsg(`Login failed: ${err.message}`, "status-err");
+      }
+    });
+
+    el("btn-logout").addEventListener("click", async () => {
+      try {
+        await api("/api/sim/auth/logout", { method: "POST" });
+      } catch (_) {}
+      state.selectedRunId = null;
+      await refreshAll();
+    });
+    el("btn-me").addEventListener("click", refreshAll);
+
+    el("env-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const editId = el("env-id").value;
+        const basePayload = {
+          name: el("env-name").value,
+          base_url: el("env-base").value,
+          api_username: el("env-user").value,
+          auth_mode: el("env-mode").value,
+          is_active: true
+        };
+        const password = el("env-pass").value;
+        if (editId) {
+          const payload = { ...basePayload };
+          if (password.trim()) payload.api_password = password;
+          await api(`/api/sim/environments/${editId}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload)
+          });
+          setMsg("Environment updated", "status-ok");
+        } else {
+          if (!password.trim()) throw new Error("API password is required when creating an environment");
+          await api("/api/sim/environments", {
+            method: "POST",
+            body: JSON.stringify({
+              ...basePayload,
+              api_password: password
+            })
+          });
+          setMsg("Environment created", "status-ok");
+        }
+        resetEnvForm();
+        await refreshEnvs();
+      } catch (err) {
+        setMsg(`Save environment failed: ${err.message}`, "status-err");
+      }
+    });
+
+    el("env-cancel").addEventListener("click", () => {
+      resetEnvForm();
+      setMsg("Edit cancelled", "tiny");
+    });
+
+    el("profile-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const editId = el("profile-id").value;
+        const minMins = Number(el("profile-min-mins").value || 30);
+        const maxMins = Number(el("profile-max-mins").value || 60);
+        const payload = {
+          name: el("profile-name").value,
+          device_count_initial: Number(el("profile-count").value || 200),
+          update_min_ms: Math.max(1, minMins) * 60 * 1000,
+          update_max_ms: Math.max(Math.max(1, minMins), maxMins) * 60 * 1000,
+          activation_chance: Math.max(0, Math.min(1, Number(el("profile-active-ratio").value || 3) / 100)),
+          active_interval_ms: Math.max(1, Number(el("profile-active-int-sec").value || 30)) * 1000,
+          active_duration_ms: Math.max(1, Number(el("profile-active-dur-mins").value || 15)) * 60 * 1000,
+          case_creation_delay_ms: Math.max(0, Number(el("profile-delay-ms").value || 0)),
+          teardown_mode: el("profile-teardown").value
+        };
+
+        if (editId) {
+          await api(`/api/sim/profiles/${editId}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload)
+          });
+          setMsg("Profile updated", "status-ok");
+        } else {
+          await api("/api/sim/profiles", {
+            method: "POST",
+            body: JSON.stringify(payload)
+          });
+          setMsg("Profile created", "status-ok");
+        }
+        resetProfileForm();
+        await refreshProfiles();
+      } catch (err) {
+        setMsg(`Save profile failed: ${err.message}`, "status-err");
+      }
+    });
+
+    el("profile-cancel").addEventListener("click", () => {
+      resetProfileForm();
+      setMsg("Profile edit cancelled", "tiny");
+    });
+
+    el("run-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try {
+        const payload = {
+          environment_id: Number(el("run-env").value),
+        };
+        const profile = el("run-profile").value;
+        if (!profile) throw new Error("Please select a profile");
+        payload.profile_id = Number(profile);
+        const run = await api("/api/sim/runs", { method: "POST", body: JSON.stringify(payload) });
+        state.selectedRunId = run.id;
+        setMsg(`Run ${run.id} started`, "status-ok");
+        await refreshRuns();
+        await refreshSelected();
+      } catch (err) {
+        setMsg(`Create run failed: ${err.message}`, "status-err");
+      }
+    });
+
+    setInterval(async () => {
+      if (!state.authed) return;
+      try {
+        await refreshRuns();
+        if (state.selectedRunId) await refreshSelected();
+      } catch (_) {}
+    }, 4000);
+
+    refreshAll();
+  </script>
+</body>
+</html>
