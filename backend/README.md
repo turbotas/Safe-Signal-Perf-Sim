@@ -12,6 +12,9 @@ This folder contains the hosted simulator backend scaffold.
    - `SIM_SECRET_KEY` (set this in real deployments)
    - `SIM_SEED_ADMIN_EMAIL` (default: `admin@perfsim.local`)
    - `SIM_SEED_ADMIN_PASSWORD` (default: `ChangeMeNow123!`)
+   - `SIM_WORKER_TIMING_DEBUG` (default: `false`)
+   - `SIM_WORKER_TIMING_SAMPLE_RATE` (default: `0.1`, range `0.0..1.0`)
+   - `SIM_WORKER_TIMING_SLOW_MS` (default: `2000`)
 4. Run migrations:
    - `alembic -c backend/alembic.ini upgrade head`
 5. Start API:
@@ -47,6 +50,7 @@ This verifies app boot and health endpoint wiring.
 - `GET/POST/PATCH/DELETE /api/sim/profiles`
 - `GET/POST /api/sim/runs`
 - `GET /api/sim/runs/{id}`
+- `GET /api/sim/runs/{id}/metrics`
 - `GET /api/sim/runs/{id}/events`
 - `GET /api/sim/runs/{id}/cases`
 - `POST /api/sim/runs/{id}/stop`
@@ -64,6 +68,15 @@ This verifies app boot and health endpoint wiring.
 - Teardown now attempts close -> archive -> delete (or archive-only depending on profile teardown mode).
 - Teardown retries use backoff and can mark runs `action_required` when environment auth blocks cleanup.
 - Runs track basic API performance counters (`api_calls_total`, failed count, avg ms, last ms).
+
+## Provisioning/Teardown Timing Debug
+
+- Enable detailed worker timing logs by setting `SIM_WORKER_TIMING_DEBUG=true`.
+- Use `SIM_WORKER_TIMING_SAMPLE_RATE` to reduce log volume (for example `0.05` for 5% sample).
+- Slow operations above `SIM_WORKER_TIMING_SLOW_MS` emit `[timing][slow]` warning logs.
+- Timing debug writes to server logs (stdout/stderr) and includes per-case stage timings for:
+  - Provisioning (`auth_client`, create, optional lookup, photo upload, enroll, total)
+  - Teardown (`auth_client`, fetch, close/archive/delete where applicable, total)
 
 ## Console capabilities (current)
 

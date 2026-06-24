@@ -30,6 +30,7 @@ def create_profile(
 
     row = RunProfile(
         name=payload.name.strip(),
+        profile_kind=payload.profile_kind,
         device_count_initial=payload.device_count_initial,
         update_min_ms=payload.update_min_ms,
         update_max_ms=payload.update_max_ms,
@@ -38,6 +39,11 @@ def create_profile(
         active_duration_ms=payload.active_duration_ms,
         case_creation_delay_ms=payload.case_creation_delay_ms,
         teardown_mode=payload.teardown_mode,
+        caseworker_worker_count_initial=payload.caseworker_worker_count_initial,
+        caseworker_actions_per_min_per_worker=payload.caseworker_actions_per_min_per_worker,
+        caseworker_think_time_min_ms=payload.caseworker_think_time_min_ms,
+        caseworker_think_time_max_ms=payload.caseworker_think_time_max_ms,
+        caseworker_read_ratio=payload.caseworker_read_ratio,
         created_by_user_id=current_user.id,
     )
     db.add(row)
@@ -66,6 +72,7 @@ def update_profile(
         row.name = new_name
 
     for key in (
+        "profile_kind",
         "device_count_initial",
         "update_min_ms",
         "update_max_ms",
@@ -74,12 +81,22 @@ def update_profile(
         "active_duration_ms",
         "case_creation_delay_ms",
         "teardown_mode",
+        "caseworker_worker_count_initial",
+        "caseworker_actions_per_min_per_worker",
+        "caseworker_think_time_min_ms",
+        "caseworker_think_time_max_ms",
+        "caseworker_read_ratio",
     ):
         if key in updates:
             setattr(row, key, updates[key])
 
     if row.update_max_ms < row.update_min_ms:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="update_max_ms must be >= update_min_ms")
+    if row.caseworker_think_time_max_ms < row.caseworker_think_time_min_ms:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="caseworker_think_time_max_ms must be >= caseworker_think_time_min_ms",
+        )
 
     db.commit()
     db.refresh(row)

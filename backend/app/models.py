@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -91,6 +91,12 @@ class RunProfile(TimestampMixin, Base):
     active_duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=15 * 60 * 1000)
     case_creation_delay_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     teardown_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="delete")
+    profile_kind: Mapped[str] = mapped_column(String(30), nullable=False, default="device_telemetry")
+    caseworker_worker_count_initial: Mapped[int] = mapped_column(Integer, nullable=False, default=20)
+    caseworker_actions_per_min_per_worker: Mapped[float] = mapped_column(Float, nullable=False, default=6.0)
+    caseworker_think_time_min_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=1500)
+    caseworker_think_time_max_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=6000)
+    caseworker_read_ratio: Mapped[float] = mapped_column(Float, nullable=False, default=0.75)
     created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
 
     created_by: Mapped[User] = relationship(back_populates="run_profiles")
@@ -103,10 +109,16 @@ class Run(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     environment_id: Mapped[int] = mapped_column(ForeignKey("environments.id", ondelete="RESTRICT"), nullable=False, index=True)
     profile_id: Mapped[int | None] = mapped_column(ForeignKey("run_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
+    parent_run_id: Mapped[int | None] = mapped_column(ForeignKey("runs.id", ondelete="RESTRICT"), nullable=True, index=True)
+    run_kind: Mapped[str] = mapped_column(String(30), nullable=False, default="device_telemetry")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="starting")
     blocked_reason: Mapped[str | None] = mapped_column(String(80), nullable=True)
     desired_case_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active_case_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actions_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actions_failed_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    actions_per_second_current: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    actions_per_second_avg: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     api_calls_total: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     api_calls_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     api_avg_response_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -120,6 +132,23 @@ class Run(TimestampMixin, Base):
     created_by: Mapped[User] = relationship(back_populates="runs")
     cases: Mapped[list[RunCase]] = relationship(back_populates="run", cascade="all, delete-orphan")
     events: Mapped[list[RunEvent]] = relationship(back_populates="run", cascade="all, delete-orphan")
+    action_stats: Mapped[list[RunActionStat]] = relationship(back_populates="run", cascade="all, delete-orphan")
+
+
+class RunActionStat(TimestampMixin, Base):
+    __tablename__ = "run_action_stats"
+    __table_args__ = (UniqueConstraint("run_id", "action_type", name="uq_run_action_stats_run_action_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    environment_id: Mapped[int] = mapped_column(ForeignKey("environments.id", ondelete="RESTRICT"), nullable=False, index=True)
+    action_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    avg_response_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    last_response_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    run: Mapped[Run] = relationship(back_populates="action_stats")
 
 
 class RunCase(TimestampMixin, Base):

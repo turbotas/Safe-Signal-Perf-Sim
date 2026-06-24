@@ -126,6 +126,7 @@ class Environment2FASubmitRequest(BaseModel):
 
 class RunProfileBase(BaseModel):
     name: str = Field(min_length=2, max_length=120)
+    profile_kind: str = Field(default="device_telemetry", pattern="^(device_telemetry|case_worker)$")
     device_count_initial: int = Field(default=200, ge=1, le=10000)
     update_min_ms: int = Field(default=30 * 60 * 1000, ge=1000)
     update_max_ms: int = Field(default=60 * 60 * 1000, ge=1000)
@@ -134,6 +135,11 @@ class RunProfileBase(BaseModel):
     active_duration_ms: int = Field(default=15 * 60 * 1000, ge=1000)
     case_creation_delay_ms: int = Field(default=0, ge=0, le=10000)
     teardown_mode: str = Field(default="delete", pattern="^(delete|archive)$")
+    caseworker_worker_count_initial: int = Field(default=20, ge=1, le=10000)
+    caseworker_actions_per_min_per_worker: float = Field(default=6.0, ge=0.1, le=600.0)
+    caseworker_think_time_min_ms: int = Field(default=1500, ge=50, le=120000)
+    caseworker_think_time_max_ms: int = Field(default=6000, ge=50, le=120000)
+    caseworker_read_ratio: float = Field(default=0.75, ge=0.0, le=1.0)
 
     @field_validator("update_max_ms")
     @classmethod
@@ -143,6 +149,14 @@ class RunProfileBase(BaseModel):
             raise ValueError("update_max_ms must be greater than or equal to update_min_ms")
         return value
 
+    @field_validator("caseworker_think_time_max_ms")
+    @classmethod
+    def validate_caseworker_think_range(cls, value: int, info):
+        min_value = info.data.get("caseworker_think_time_min_ms", value)
+        if value < min_value:
+            raise ValueError("caseworker_think_time_max_ms must be >= caseworker_think_time_min_ms")
+        return value
+
 
 class RunProfileCreate(RunProfileBase):
     pass
@@ -150,6 +164,7 @@ class RunProfileCreate(RunProfileBase):
 
 class RunProfileUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=120)
+    profile_kind: str | None = Field(default=None, pattern="^(device_telemetry|case_worker)$")
     device_count_initial: int | None = Field(default=None, ge=1, le=10000)
     update_min_ms: int | None = Field(default=None, ge=1000)
     update_max_ms: int | None = Field(default=None, ge=1000)
@@ -158,6 +173,11 @@ class RunProfileUpdate(BaseModel):
     active_duration_ms: int | None = Field(default=None, ge=1000)
     case_creation_delay_ms: int | None = Field(default=None, ge=0, le=10000)
     teardown_mode: str | None = Field(default=None, pattern="^(delete|archive)$")
+    caseworker_worker_count_initial: int | None = Field(default=None, ge=1, le=10000)
+    caseworker_actions_per_min_per_worker: float | None = Field(default=None, ge=0.1, le=600.0)
+    caseworker_think_time_min_ms: int | None = Field(default=None, ge=50, le=120000)
+    caseworker_think_time_max_ms: int | None = Field(default=None, ge=50, le=120000)
+    caseworker_read_ratio: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class RunProfileOut(RunProfileBase):
@@ -173,6 +193,7 @@ class RunCreate(BaseModel):
     environment_id: int
     profile_id: int | None = None
     desired_case_count: int | None = Field(default=None, ge=1, le=10000)
+    parent_run_id: int | None = None
 
 
 class RunScaleRequest(BaseModel):
@@ -192,10 +213,16 @@ class RunOut(BaseModel):
     id: int
     environment_id: int
     profile_id: int | None
+    parent_run_id: int | None
+    run_kind: str
     status: str
     blocked_reason: str | None
     desired_case_count: int
     active_case_count: int
+    actions_total: int
+    actions_failed_total: int
+    actions_per_second_current: float
+    actions_per_second_avg: float
     api_calls_total: int
     api_calls_failed: int
     api_avg_response_ms: float
@@ -205,6 +232,35 @@ class RunOut(BaseModel):
     stopped_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class RunActionStatOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    run_id: int
+    environment_id: int
+    action_type: str
+    success_count: int
+    failure_count: int
+    avg_response_ms: float
+    last_response_ms: float
+    created_at: datetime
+    updated_at: datetime
+
+
+class RunMetricsOut(BaseModel):
+    run_id: int
+    run_kind: str
+    actions_total: int
+    actions_failed_total: int
+    actions_per_second_current: float
+    actions_per_second_avg: float
+    api_calls_total: int
+    api_calls_failed: int
+    api_avg_response_ms: float
+    api_last_response_ms: float
+    action_stats: list[RunActionStatOut]
 
 
 class RunEventOut(BaseModel):

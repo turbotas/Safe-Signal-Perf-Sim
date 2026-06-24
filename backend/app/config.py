@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     seed_admin_password: str = "ChangeMeNow123!"
     safe_signal_auth_timeout_seconds: int = 15
     env_session_hours: int = 8
+    worker_timing_debug: bool = False
+    worker_timing_sample_rate: float = 0.1
+    worker_timing_slow_ms: float = 2000.0
 
     @property
     def normalized_secret_key(self) -> str:

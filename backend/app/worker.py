@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from datetime import date, datetime, timedelta
 import httpx
 import json
+import logging
 import math
 import mimetypes
 from pathlib import Path
@@ -12,8 +14,9 @@ from time import perf_counter
 
 from sqlalchemy import func, select
 
+from app.config import settings
 from app.db import SessionLocal
-from app.models import Environment, Run, RunCase, RunEvent
+from app.models import Environment, Run, RunActionStat, RunCase, RunEvent
 from app.services.safe_signal_runtime import (
     EnvironmentAuthChallengeError,
     EnvironmentAuthFailedError,
@@ -27,6 +30,8 @@ RUN_CASE_ACTIVE_STATES = {"active", "active_alert"}
 RUN_CASE_TEARDOWN_QUEUE_STATES = {"teardown_pending", "teardown_failed", "teardown_blocked_auth", "scale_down_pending"}
 RUN_CASE_PROVISION_QUEUE_STATES = {"provisioning", "provision_failed"}
 RUN_CASE_UPDATE_STATES = {"active", "active_alert"}
+
+logger = logging.getLogger(__name__)
 
 RISK_LEVELS = ["High", "Medium", "Low"]
 OS_TYPES = ["Android", "Apple"]
@@ -132,6 +137,8 @@ class SimulatorWorker:
         self._env_context_cache: dict[int, dict[str, object]] = {}
         self._photo_inventory: dict[str, list[Path]] = {"male": [], "female": []}
         self._photo_inventory_loaded = False
+        self._caseworker_action_credit: dict[int, float] = {}
+        self._caseworker_action_times: dict[int, deque[datetime]] = {}
 
     def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -150,7 +157,7 @@ class SimulatorWorker:
             try:
                 self.tick()
             except Exception:
-                pass
+                logger.exception("Simulator worker tick failed")
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=self.tick_seconds)
             except TimeoutError:
@@ -163,7 +170,47 @@ class SimulatorWorker:
                 self._reconcile_run(db, run)
             db.commit()
 
+    def _timing_enabled(self) -> bool:
+        return bool(settings.worker_timing_debug)
+
+    def _timing_sampled(self) -> bool:
+        if not self._timing_enabled():
+            return False
+        rate = max(0.0, min(1.0, float(settings.worker_timing_sample_rate)))
+        return random.random() <= rate
+
+    def _timing_log(self, *, label: str, run: Run, case: RunCase | None, success: bool, stages_ms: dict[str, float], error: str = "") -> None:
+        if not self._timing_enabled():
+            return
+        total_ms = sum(max(0.0, float(value)) for value in stages_ms.values())
+        case_id = case.id if case is not None else None
+        safe_case_id = case.safe_signal_case_id if case is not None else None
+        logger.info(
+            "[timing] %s run=%s case=%s safe_case=%s success=%s total_ms=%.1f stages=%s error=%s",
+            label,
+            run.id,
+            case_id,
+            safe_case_id,
+            success,
+            total_ms,
+            {k: round(v, 1) for k, v in stages_ms.items()},
+            error,
+        )
+        if total_ms >= float(settings.worker_timing_slow_ms):
+            logger.warning(
+                "[timing][slow] %s run=%s case=%s total_ms=%.1f threshold_ms=%.1f",
+                label,
+                run.id,
+                case_id,
+                total_ms,
+                float(settings.worker_timing_slow_ms),
+            )
+
     def _reconcile_run(self, db, run: Run) -> None:
+        if run.run_kind == "case_worker":
+            self._reconcile_case_worker_run(db, run)
+            return
+
         now = datetime.utcnow()
         desired = max(0, run.desired_case_count)
         if run.status == "stopping":
@@ -282,6 +329,246 @@ class SimulatorWorker:
                 run.blocked_reason = None
 
         run.active_case_count = active_count
+
+    def _reconcile_case_worker_run(self, db, run: Run) -> None:
+        now = datetime.utcnow()
+        if run.status == "stopped":
+            run.actions_per_second_current = 0.0
+            self._caseworker_action_credit.pop(run.id, None)
+            self._caseworker_action_times.pop(run.id, None)
+            return
+
+        if run.status == "stopping":
+            run.status = "stopped"
+            run.stopped_at = now
+            run.blocked_reason = None
+            run.actions_per_second_current = 0.0
+            self._caseworker_action_credit.pop(run.id, None)
+            self._caseworker_action_times.pop(run.id, None)
+            return
+
+        if run.parent_run_id is None:
+            run.status = "action_required"
+            run.blocked_reason = "missing_parent_run"
+            run.active_case_count = 0
+            run.actions_per_second_current = 0.0
+            return
+
+        parent_run = db.get(Run, run.parent_run_id)
+        if parent_run is None or parent_run.run_kind != "device_telemetry":
+            run.status = "action_required"
+            run.blocked_reason = "parent_run_invalid"
+            run.active_case_count = 0
+            run.actions_per_second_current = 0.0
+            return
+
+        if parent_run.status != "running":
+            run.status = "action_required"
+            run.blocked_reason = "parent_not_running"
+            run.active_case_count = 0
+            run.actions_per_second_current = 0.0
+            return
+
+        if run.status == "action_required" and run.blocked_reason == "parent_not_running":
+            run.status = "running"
+            run.blocked_reason = None
+
+        case_pool = (
+            db.execute(
+                select(RunCase)
+                .where(RunCase.run_id == parent_run.id)
+                .where(RunCase.state.in_(RUN_CASE_UPDATE_STATES))
+                .where(RunCase.safe_signal_case_id.is_not(None))
+                .order_by(RunCase.id.asc())
+                .limit(1000)
+            )
+            .scalars()
+            .all()
+        )
+        run.active_case_count = len(case_pool)
+
+        if run.status != "running" or not case_pool:
+            self._update_case_worker_tps(run, now)
+            return
+
+        profile = run.profile
+        worker_count = max(0, run.desired_case_count)
+        actions_per_min_per_worker = 6.0
+        read_ratio = 0.75
+        if profile is not None:
+            actions_per_min_per_worker = max(0.1, float(profile.caseworker_actions_per_min_per_worker))
+            read_ratio = max(0.0, min(1.0, float(profile.caseworker_read_ratio)))
+
+        expected_actions_this_tick = worker_count * actions_per_min_per_worker * (self.tick_seconds / 60.0)
+        credit = self._caseworker_action_credit.get(run.id, 0.0) + expected_actions_this_tick
+        action_budget = min(self.batch_size * 4, int(math.floor(credit)))
+        self._caseworker_action_credit[run.id] = max(0.0, credit - action_budget)
+
+        if action_budget <= 0:
+            self._update_case_worker_tps(run, now)
+            return
+
+        environment = db.get(Environment, run.environment_id)
+        if environment is None:
+            run.status = "action_required"
+            run.blocked_reason = "environment_missing"
+            self._update_case_worker_tps(run, now)
+            return
+
+        action_stats_cache: dict[str, RunActionStat] = {}
+        try:
+            with authenticated_environment_client(db, environment) as client:
+                for _ in range(action_budget):
+                    case = random.choice(case_pool)
+                    self._execute_case_worker_action(db, run, case, client, read_ratio, action_stats_cache)
+        except EnvironmentAuthChallengeError:
+            run.status = "action_required"
+            run.blocked_reason = "env_2fa_required"
+        except EnvironmentAuthFailedError:
+            run.status = "action_required"
+            run.blocked_reason = "env_auth_failed"
+
+        self._update_case_worker_tps(run, datetime.utcnow())
+
+    def _execute_case_worker_action(
+        self,
+        db,
+        run: Run,
+        parent_case: RunCase,
+        client,
+        read_ratio: float,
+        action_stats_cache: dict[str, RunActionStat],
+    ) -> None:
+        case_id = str(parent_case.safe_signal_case_id or "").strip()
+        if not case_id:
+            return
+
+        action_type = ""
+        failed = False
+        if random.random() <= read_ratio:
+            if random.random() < 0.25:
+                action_type = "case_list"
+                response, elapsed_ms = self._request_with_metrics_timed(run, client, "GET", "/api/cases?limit=20")
+            else:
+                action_type = "case_read_detail"
+                response, elapsed_ms = self._request_with_metrics_timed(run, client, "GET", f"/api/cases/{case_id}")
+            failed = response.status_code >= 400
+            if failed:
+                db.add(
+                    RunEvent(
+                        run_id=run.id,
+                        run_case_id=parent_case.id,
+                        environment_id=run.environment_id,
+                        level="warning",
+                        event_type="caseworker_read_failed",
+                        message=f"Case worker read failed ({response.status_code})",
+                    )
+                )
+        else:
+            action_type = "case_write_patch"
+            payload = {
+                "map_label": f"Ops-{random.randint(1000, 9999)}",
+                "officer_name": _pick(OFFICER_NAMES),
+            }
+            response, elapsed_ms = self._request_with_metrics_timed(
+                run,
+                client,
+                "PATCH",
+                f"/api/cases/{case_id}",
+                json_body=payload,
+            )
+            failed = response.status_code >= 400
+            if failed:
+                db.add(
+                    RunEvent(
+                        run_id=run.id,
+                        run_case_id=parent_case.id,
+                        environment_id=run.environment_id,
+                        level="warning",
+                        event_type="caseworker_write_failed",
+                        message=f"Case worker write failed ({response.status_code})",
+                    )
+                )
+
+        self._record_case_worker_action(
+            db,
+            run,
+            action_type=action_type,
+            elapsed_ms=elapsed_ms,
+            failed=failed,
+            action_stats_cache=action_stats_cache,
+        )
+
+    def _record_case_worker_action(
+        self,
+        db,
+        run: Run,
+        *,
+        action_type: str,
+        elapsed_ms: float,
+        failed: bool,
+        action_stats_cache: dict[str, RunActionStat],
+    ) -> None:
+        run.actions_total += 1
+        if failed:
+            run.actions_failed_total += 1
+        timestamps = self._caseworker_action_times.get(run.id)
+        if timestamps is None:
+            timestamps = deque()
+            self._caseworker_action_times[run.id] = timestamps
+        timestamps.append(datetime.utcnow())
+
+        stat = action_stats_cache.get(action_type)
+        if stat is None:
+            stat = db.execute(
+                select(RunActionStat)
+                .where(RunActionStat.run_id == run.id)
+                .where(RunActionStat.action_type == action_type)
+                .limit(1)
+            ).scalar_one_or_none()
+        if stat is None:
+            stat = RunActionStat(
+                run_id=run.id,
+                environment_id=run.environment_id,
+                action_type=action_type,
+                success_count=0,
+                failure_count=0,
+                avg_response_ms=0.0,
+                last_response_ms=0.0,
+            )
+            db.add(stat)
+            db.flush()
+        action_stats_cache[action_type] = stat
+
+        previous_count = stat.success_count + stat.failure_count
+        new_count = previous_count + 1
+        if failed:
+            stat.failure_count += 1
+        else:
+            stat.success_count += 1
+        stat.last_response_ms = elapsed_ms
+        if previous_count <= 0:
+            stat.avg_response_ms = elapsed_ms
+        else:
+            stat.avg_response_ms = ((stat.avg_response_ms * previous_count) + elapsed_ms) / new_count
+
+    def _update_case_worker_tps(self, run: Run, now: datetime) -> None:
+        window_seconds = 30.0
+        cutoff = now - timedelta(seconds=window_seconds)
+        timestamps = self._caseworker_action_times.get(run.id)
+        if timestamps is None:
+            timestamps = deque()
+            self._caseworker_action_times[run.id] = timestamps
+        while timestamps and timestamps[0] < cutoff:
+            timestamps.popleft()
+
+        run.actions_per_second_current = len(timestamps) / window_seconds
+        if run.started_at is None:
+            run.actions_per_second_avg = 0.0
+            return
+
+        elapsed_seconds = max(1.0, (now - run.started_at).total_seconds())
+        run.actions_per_second_avg = float(run.actions_total) / elapsed_seconds
 
     def _get_environment_context(self, db, environment: Environment) -> dict[str, object]:
         now = datetime.utcnow()
@@ -600,19 +887,24 @@ class SimulatorWorker:
         client,
         case_id: object,
         staged_photos: list[dict[str, object]],
-    ) -> None:
+    ) -> dict[str, float]:
+        stats = {"attempts": 0.0, "failed": 0.0, "elapsed_ms": 0.0}
         for photo in staged_photos:
             path = photo.get("path") if isinstance(photo, dict) else None
             if not isinstance(path, Path) or not path.exists():
                 continue
             target_type = str(photo.get("target_type", "user"))
             label = str(photo.get("label", "Case Photo"))
+            stats["attempts"] += 1
+            photo_started = perf_counter()
             try:
                 with path.open("rb") as handle:
                     files = {"file": (path.name, handle, self._guess_content_type(path))}
                     data = {"target_type": target_type, "label": label}
                     response = self._request_with_metrics(run, client, "POST", f"/api/cases/{case_id}/photos", data=data, files=files)
+                stats["elapsed_ms"] += (perf_counter() - photo_started) * 1000.0
                 if response.status_code >= 400:
+                    stats["failed"] += 1
                     db.add(
                         RunEvent(
                             run_id=run.id,
@@ -625,6 +917,8 @@ class SimulatorWorker:
                         )
                     )
             except Exception as exc:
+                stats["failed"] += 1
+                stats["elapsed_ms"] += (perf_counter() - photo_started) * 1000.0
                 db.add(
                     RunEvent(
                         run_id=run.id,
@@ -635,6 +929,7 @@ class SimulatorWorker:
                         message=f"Photo upload exception for {target_type}: {exc}",
                     )
                 )
+        return stats
 
     def _safe_get_json(self, client, method: str, path: str, run: Run | None):
         start = perf_counter()
@@ -650,6 +945,7 @@ class SimulatorWorker:
             return None
 
     def _process_provisioning_queue(self, db, run: Run) -> None:
+        queue_started = perf_counter()
         now = datetime.utcnow()
         queued = (
             db.execute(
@@ -692,6 +988,19 @@ class SimulatorWorker:
         for case in queued:
             self._provision_case(db, run, case, environment, context_data)
 
+        if self._timing_enabled():
+            elapsed_ms = (perf_counter() - queue_started) * 1000.0
+            done_count = sum(1 for item in queued if item.state == "active")
+            failed_count = sum(1 for item in queued if item.state == "provision_failed")
+            logger.info(
+                "[timing] provision_queue run=%s queued=%s active=%s failed=%s elapsed_ms=%.1f",
+                run.id,
+                len(queued),
+                done_count,
+                failed_count,
+                elapsed_ms,
+            )
+
     def _mark_provision_failed(self, case: RunCase, message: str, run: Run, db) -> None:
         case.provision_attempts += 1
         delay_seconds = min(900, 15 * (2 ** max(0, case.provision_attempts - 1)))
@@ -727,6 +1036,9 @@ class SimulatorWorker:
 
     def _provision_case(self, db, run: Run, case: RunCase, environment: Environment, context_data: dict[str, object]) -> None:
         device_id = case.device_id or _random_phone()
+        timing_sample = self._timing_sampled()
+        timing_stages_ms: dict[str, float] = {}
+        timing_started = perf_counter()
         org_ids = context_data.get("organisation_ids") if isinstance(context_data.get("organisation_ids"), list) else []
         default_org_id = context_data.get("default_organisation_id")
         candidate_org_ids: list[object | None] = [item for item in org_ids if item is not None]
@@ -737,7 +1049,10 @@ class SimulatorWorker:
             candidate_org_ids = [None]
 
         try:
+            auth_started = perf_counter()
             with authenticated_environment_client(db, environment) as client:
+                if timing_sample:
+                    timing_stages_ms["auth_client_ms"] = (perf_counter() - auth_started) * 1000.0
                 created = None
                 created_json = None
                 org_errors: list[str] = []
@@ -748,6 +1063,8 @@ class SimulatorWorker:
                     create_start = perf_counter()
                     created = client.post("/api/cases", json=payload)
                     create_ms = (perf_counter() - create_start) * 1000.0
+                    if timing_sample:
+                        timing_stages_ms[f"create_case_org_{org_id}"] = create_ms
                     self._record_api_metric(run, create_ms, created.status_code >= 400)
 
                     if created.status_code == 403 and len(candidate_org_ids) > 1:
@@ -758,6 +1075,8 @@ class SimulatorWorker:
                         lookup_start = perf_counter()
                         lookup = client.get(f"/api/cases?search={device_id}&limit=10")
                         lookup_ms = (perf_counter() - lookup_start) * 1000.0
+                        if timing_sample:
+                            timing_stages_ms["lookup_after_503_ms"] = lookup_ms
                         self._record_api_metric(run, lookup_ms, lookup.status_code >= 400)
                         if lookup.status_code >= 400:
                             raise RuntimeError("case create returned 503 and lookup failed")
@@ -797,11 +1116,15 @@ class SimulatorWorker:
                     if details.status_code < 400:
                         case_reference = _extract_case_reference_from_payload(details.json())
 
-                self._upload_case_photos_best_effort(db, run, case, client, case_id, staged_photos)
+                photo_stats = self._upload_case_photos_best_effort(db, run, case, client, case_id, staged_photos)
+                if timing_sample and photo_stats["attempts"] > 0:
+                    timing_stages_ms["photo_upload_ms"] = photo_stats["elapsed_ms"]
 
                 enroll_start = perf_counter()
                 enroll = client.post("/api/devices/enroll", json={"device_id": device_id, "pin": activation_code})
                 enroll_ms = (perf_counter() - enroll_start) * 1000.0
+                if timing_sample:
+                    timing_stages_ms["device_enroll_ms"] = enroll_ms
                 self._record_api_metric(run, enroll_ms, enroll.status_code >= 400)
                 if enroll.status_code >= 400:
                     detail = (enroll.text or "").strip().replace("\n", " ")[:300]
@@ -830,19 +1153,32 @@ class SimulatorWorker:
                 self._save_case_runtime_state(case, runtime_state)
                 case.next_update_at = datetime.utcnow() + timedelta(milliseconds=self._random_update_interval_ms(run))
                 self._mark_provision_done(case, run, db)
+                if timing_sample:
+                    timing_stages_ms["total_provision_ms"] = (perf_counter() - timing_started) * 1000.0
+                    self._timing_log(label="provision_case", run=run, case=case, success=True, stages_ms=timing_stages_ms)
 
         except EnvironmentAuthChallengeError as exc:
             run.status = "action_required"
             run.blocked_reason = "env_2fa_required"
             self._mark_provision_failed(case, str(exc), run, db)
+            if timing_sample:
+                timing_stages_ms["total_provision_ms"] = (perf_counter() - timing_started) * 1000.0
+                self._timing_log(label="provision_case", run=run, case=case, success=False, stages_ms=timing_stages_ms, error=str(exc))
         except EnvironmentAuthFailedError as exc:
             run.status = "action_required"
             run.blocked_reason = "env_auth_failed"
             self._mark_provision_failed(case, str(exc), run, db)
+            if timing_sample:
+                timing_stages_ms["total_provision_ms"] = (perf_counter() - timing_started) * 1000.0
+                self._timing_log(label="provision_case", run=run, case=case, success=False, stages_ms=timing_stages_ms, error=str(exc))
         except Exception as exc:
             self._mark_provision_failed(case, str(exc), run, db)
+            if timing_sample:
+                timing_stages_ms["total_provision_ms"] = (perf_counter() - timing_started) * 1000.0
+                self._timing_log(label="provision_case", run=run, case=case, success=False, stages_ms=timing_stages_ms, error=str(exc))
 
     def _process_teardown_queue(self, db, run: Run) -> None:
+        queue_started = perf_counter()
         now = datetime.utcnow()
         queued = (
             db.execute(
@@ -867,6 +1203,21 @@ class SimulatorWorker:
 
         for case in queued:
             self._teardown_case(db, run, case, environment)
+
+        if self._timing_enabled():
+            elapsed_ms = (perf_counter() - queue_started) * 1000.0
+            done_count = sum(1 for item in queued if item.state == "teardown_done")
+            failed_count = sum(1 for item in queued if item.state == "teardown_failed")
+            blocked_count = sum(1 for item in queued if item.state == "teardown_blocked_auth")
+            logger.info(
+                "[timing] teardown_queue run=%s queued=%s done=%s failed=%s blocked=%s elapsed_ms=%.1f",
+                run.id,
+                len(queued),
+                done_count,
+                failed_count,
+                blocked_count,
+                elapsed_ms,
+            )
 
     def _process_status_updates(self, db, run: Run) -> None:
         if run.status != "running":
@@ -1042,13 +1393,22 @@ class SimulatorWorker:
             return
 
         teardown_mode = run.profile.teardown_mode if run.profile is not None else "delete"
+        timing_sample = self._timing_sampled()
+        timing_stages_ms: dict[str, float] = {}
+        teardown_started = perf_counter()
 
         try:
+            auth_started = perf_counter()
             with authenticated_environment_client(db, environment) as client:
+                if timing_sample:
+                    timing_stages_ms["auth_client_ms"] = (perf_counter() - auth_started) * 1000.0
                 case_id = case.safe_signal_case_id
                 status = ""
 
+                fetch_started = perf_counter()
                 response = self._request_with_metrics(run, client, "GET", f"/api/cases/{case_id}")
+                if timing_sample:
+                    timing_stages_ms["fetch_case_ms"] = (perf_counter() - fetch_started) * 1000.0
                 if response.status_code == 404:
                     status = ""
                 elif response.status_code >= 400:
@@ -1057,6 +1417,7 @@ class SimulatorWorker:
                     status = self._extract_case_status(response.json())
 
                 if status == "open":
+                    close_started = perf_counter()
                     patch = self._request_with_metrics(
                         run,
                         client,
@@ -1067,8 +1428,11 @@ class SimulatorWorker:
                     if patch.status_code >= 400 and patch.status_code != 404:
                         raise RuntimeError(f"close case failed ({patch.status_code})")
                     status = "closed"
+                    if timing_sample:
+                        timing_stages_ms["close_case_ms"] = (perf_counter() - close_started) * 1000.0
 
                 if status == "closed":
+                    archive_started = perf_counter()
                     patch = self._request_with_metrics(
                         run,
                         client,
@@ -1079,13 +1443,21 @@ class SimulatorWorker:
                     if patch.status_code >= 400 and patch.status_code != 404:
                         raise RuntimeError(f"archive case failed ({patch.status_code})")
                     status = "archived"
+                    if timing_sample:
+                        timing_stages_ms["archive_case_ms"] = (perf_counter() - archive_started) * 1000.0
 
                 if teardown_mode == "delete":
+                    delete_started = perf_counter()
                     delete = self._request_with_metrics(run, client, "DELETE", f"/api/cases/{case_id}")
                     if delete.status_code >= 400 and delete.status_code != 404:
                         raise RuntimeError(f"delete case failed ({delete.status_code})")
+                    if timing_sample:
+                        timing_stages_ms["delete_case_ms"] = (perf_counter() - delete_started) * 1000.0
 
                 self._mark_teardown_done(case, run, db)
+                if timing_sample:
+                    timing_stages_ms["total_teardown_ms"] = (perf_counter() - teardown_started) * 1000.0
+                    self._timing_log(label="teardown_case", run=run, case=case, success=True, stages_ms=timing_stages_ms)
 
         except EnvironmentAuthChallengeError as exc:
             run.status = "action_required"
@@ -1093,6 +1465,9 @@ class SimulatorWorker:
             case.state = "teardown_blocked_auth"
             case.last_error = str(exc)
             case.next_teardown_at = datetime.utcnow() + timedelta(minutes=5)
+            if timing_sample:
+                timing_stages_ms["total_teardown_ms"] = (perf_counter() - teardown_started) * 1000.0
+                self._timing_log(label="teardown_case", run=run, case=case, success=False, stages_ms=timing_stages_ms, error=str(exc))
             db.add(
                 RunEvent(
                     run_id=run.id,
@@ -1107,8 +1482,14 @@ class SimulatorWorker:
             run.status = "action_required"
             run.blocked_reason = "env_auth_failed"
             self._mark_teardown_failed(case, str(exc), run, db)
+            if timing_sample:
+                timing_stages_ms["total_teardown_ms"] = (perf_counter() - teardown_started) * 1000.0
+                self._timing_log(label="teardown_case", run=run, case=case, success=False, stages_ms=timing_stages_ms, error=str(exc))
         except Exception as exc:
             self._mark_teardown_failed(case, str(exc), run, db)
+            if timing_sample:
+                timing_stages_ms["total_teardown_ms"] = (perf_counter() - teardown_started) * 1000.0
+                self._timing_log(label="teardown_case", run=run, case=case, success=False, stages_ms=timing_stages_ms, error=str(exc))
 
     def _request_with_metrics(
         self,
@@ -1126,6 +1507,23 @@ class SimulatorWorker:
         elapsed_ms = (perf_counter() - start) * 1000.0
         self._record_api_metric(run, elapsed_ms, response.status_code >= 400)
         return response
+
+    def _request_with_metrics_timed(
+        self,
+        run: Run,
+        client,
+        method: str,
+        path: str,
+        *,
+        json_body: dict | None = None,
+        data: dict[str, str] | None = None,
+        files=None,
+    ) -> tuple[object, float]:
+        start = perf_counter()
+        response = client.request(method, path, json=json_body, data=data, files=files)
+        elapsed_ms = (perf_counter() - start) * 1000.0
+        self._record_api_metric(run, elapsed_ms, response.status_code >= 400)
+        return response, elapsed_ms
 
     def _record_api_metric(self, run: Run, elapsed_ms: float, failed: bool) -> None:
         previous_count = run.api_calls_total

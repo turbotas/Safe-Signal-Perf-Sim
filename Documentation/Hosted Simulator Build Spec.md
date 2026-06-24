@@ -25,6 +25,20 @@ This document is the source of truth for v1 scope and technical decisions.
 10. Default teardown behavior is cleanup via close -> archive -> delete.
 11. Separate feature: synthetic case generation without simulation and without mandatory teardown.
 
+## Confirmed Extension Decisions (Case Worker Load)
+
+1. Add a second run/profile mode for case-worker load simulation.
+2. Case-worker runs are always child runs of an existing telemetry run.
+3. Child runs may only target cases owned by the parent telemetry run.
+4. Parent telemetry runs cannot be stopped while child case-worker runs are active.
+5. Child runs must stop (or be force-stopped by policy endpoint in future versions) before parent stop is allowed.
+6. Child write operations must enforce immutable telemetry-critical fields:
+   - enrollment details / activation pin,
+   - phone/device identifier,
+   - device API key,
+   - status transitions that break device telemetry lifecycle.
+7. Child runs expose throughput metrics as logical transaction counters/rates.
+
 ## High-Level Architecture
 
 ### Components
@@ -115,6 +129,11 @@ Note: names are implementation suggestions; exact naming can follow project conv
 - `active_duration_ms`
 - `case_creation_delay_ms`
 - `teardown_mode` (enum: `delete`, `archive`)
+- `profile_kind` (enum: `device_telemetry`, `case_worker`)
+- `caseworker_worker_count_initial`
+- `caseworker_actions_per_min_per_worker`
+- `caseworker_think_time_min_ms`, `caseworker_think_time_max_ms`
+- `caseworker_read_ratio` (0.0-1.0, remaining traffic is write attempts)
 - `created_by_user_id` (fk)
 - `created_at`, `updated_at`
 
@@ -124,9 +143,15 @@ Note: names are implementation suggestions; exact naming can follow project conv
 - `environment_id` (fk)
 - `profile_id` (fk, nullable snapshot strategy allowed)
 - `status` (enum: `starting`, `running`, `scaling`, `stopping`, `stopped`, `action_required`, `error`)
+- `run_kind` (enum: `device_telemetry`, `case_worker`)
+- `parent_run_id` (nullable fk to `runs.id`, required for `case_worker`)
 - `blocked_reason` (nullable enum/text, e.g. `env_2fa_required`)
 - `desired_case_count`
 - `active_case_count`
+- `actions_total`
+- `actions_failed_total`
+- `actions_per_second_current`
+- `actions_per_second_avg`
 - `created_by_user_id` (fk)
 - `started_at`, `stopped_at`, `created_at`, `updated_at`
 
@@ -214,9 +239,9 @@ Used to ensure only one active scheduler loop in multi-process future deployment
 ### Runs
 
 - `GET /api/sim/runs`
-- `POST /api/sim/runs` (start)
+- `POST /api/sim/runs` (start; case-worker runs must include `parent_run_id`)
 - `GET /api/sim/runs/{id}`
-- `POST /api/sim/runs/{id}/stop`
+- `POST /api/sim/runs/{id}/stop` (parent run stop blocked while child run active)
 - `POST /api/sim/runs/{id}/scale` (`delta_cases`: +N/-N)
 - `POST /api/sim/runs/{id}/resume` (if action required or recoverable)
 
@@ -261,6 +286,15 @@ The simulator service must continue to respect existing server contracts:
    - persist device API key and next update time.
 4. Transition run to `running`.
 
+### Case Worker Child Flow
+
+1. Validate profile kind `case_worker` and `parent_run_id`.
+2. Validate parent run exists, is telemetry kind, shares the same environment, and is in `running` state.
+3. Build candidate case pool from parent run owned cases only.
+4. Execute weighted read/write transactions against the case pool.
+5. Apply immutable field guardrails before every write transaction.
+6. Emit transaction metrics (`actions_total`, failures, TPS) and event records.
+
 ### Update Flow (Per Case)
 
 1. Calculate active/inactive mode based on profile and per-case state.
@@ -280,6 +314,13 @@ The simulator service must continue to respect existing server contracts:
 3. Enqueue all non-teardown-complete cases for teardown.
 4. When queue drains successfully, mark run `stopped`.
 5. If teardown blocked by auth/2FA, mark run `action_required` with clear reason.
+
+### Parent/Child Interlock Rules
+
+- Telemetry parent stop is rejected if any child case-worker run is not stopped.
+- Case-worker child start is rejected unless parent is running.
+- Child run transitions to `action_required` if parent is no longer running.
+- Parent deletion is rejected while child runs exist.
 
 ### Teardown Strategy
 
@@ -311,6 +352,7 @@ The simulator service must continue to respect existing server contracts:
 ## Observability and Ops
 
 - Run-level counters: active cases, errors, provisioned, teardown pending/failed.
+- Case-worker counters: actions total, action failures, current TPS, average TPS.
 - Environment-level health: auth session age, last successful auth, pending challenge.
 - Event stream with searchable types and timestamps.
 - Startup recovery:

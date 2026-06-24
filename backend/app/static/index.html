@@ -41,6 +41,7 @@
     td.actions-col { min-width: 240px; }
     .action-group { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-start; }
     .action-group button { margin: 0; padding: 6px 10px; font-size: 0.88rem; }
+    tr.run-child td { background: #f7fbff; }
     .env-url { max-width: 360px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .badge { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #e9f4f6; color: #0f5360; font-size: 0.8rem; }
     .status-ok { color: var(--ok); }
@@ -142,39 +143,58 @@
               <input id="profile-name" placeholder="Standard" required>
             </div>
             <div class="field">
+              <label for="profile-kind">Profile Kind</label>
+              <select id="profile-kind">
+                <option value="device_telemetry" selected>Device Telemetry</option>
+                <option value="case_worker">Case Worker</option>
+              </select>
+            </div>
+            <div class="field profile-field-telemetry">
               <label for="profile-count">Device Count</label>
               <input id="profile-count" type="number" value="200" min="1" max="10000">
             </div>
-            <div class="field">
+            <div class="field profile-field-telemetry">
               <label for="profile-min-mins">Normal Update Min (mins)</label>
               <input id="profile-min-mins" type="number" value="30" min="1" max="1440">
             </div>
-            <div class="field">
+            <div class="field profile-field-telemetry">
               <label for="profile-max-mins">Normal Update Max (mins)</label>
               <input id="profile-max-mins" type="number" value="60" min="1" max="1440">
             </div>
-            <div class="field">
+            <div class="field profile-field-telemetry">
               <label for="profile-active-ratio">Active Ratio (%)</label>
               <input id="profile-active-ratio" type="number" value="3" min="0" max="100" step="0.1">
             </div>
-            <div class="field">
+            <div class="field profile-field-telemetry">
               <label for="profile-active-int-sec">Activation Interval (sec)</label>
               <input id="profile-active-int-sec" type="number" value="30" min="1" max="3600">
             </div>
-            <div class="field">
+            <div class="field profile-field-telemetry">
               <label for="profile-active-dur-mins">Active Duration (mins)</label>
               <input id="profile-active-dur-mins" type="number" value="15" min="1" max="1440">
             </div>
-            <div class="field">
+            <div class="field profile-field-telemetry">
               <label for="profile-delay-ms">Case Creation Delay (ms)</label>
               <input id="profile-delay-ms" type="number" value="0" min="0" max="10000" step="50">
             </div>
-            <div class="field">
+            <div class="field profile-field-telemetry">
               <label for="profile-teardown">Teardown Mode</label>
               <select id="profile-teardown">
                 <option value="delete" selected>Delete (default)</option>
                 <option value="archive">Archive</option>
               </select>
+            </div>
+            <div class="field profile-field-caseworker">
+              <label for="profile-worker-count">Case Worker Count</label>
+              <input id="profile-worker-count" type="number" value="20" min="1" max="10000">
+            </div>
+            <div class="field profile-field-caseworker">
+              <label for="profile-actions-per-min">Actions/Min/Worker</label>
+              <input id="profile-actions-per-min" type="number" value="6" min="0.1" max="600" step="0.1">
+            </div>
+            <div class="field profile-field-caseworker">
+              <label for="profile-caseworker-read-ratio">Case Worker Read Ratio (%)</label>
+              <input id="profile-caseworker-read-ratio" type="number" value="75" min="0" max="100" step="1">
             </div>
           </div>
           <div class="row">
@@ -196,8 +216,12 @@
           <div class="row">
             <select id="run-env" required></select>
             <select id="run-profile" required></select>
+            <select id="run-parent" class="hidden">
+              <option value="">Parent telemetry run (required for case worker)</option>
+            </select>
             <button type="submit">Start Run</button>
           </div>
+          <div id="run-parent-env-hint" class="tiny hidden"></div>
         </form>
         <div class="table-wrap">
           <table id="run-table"></table>
@@ -207,14 +231,17 @@
       <section class="panel">
         <h2>Run Details</h2>
         <div id="run-selected" class="tiny">Select a run to inspect.</div>
+        <div class="table-wrap" style="margin-top:8px;">
+          <table id="metric-table"></table>
+        </div>
         <div class="split" style="margin-top:8px;">
-          <div>
+          <div id="run-cases-panel">
             <h2 style="font-size:0.95rem;">Cases</h2>
             <div class="table-wrap">
               <table id="case-table"></table>
             </div>
           </div>
-          <div>
+          <div id="run-events-panel">
             <h2 style="font-size:0.95rem;">Events</h2>
             <div class="table-wrap">
               <table id="event-table"></table>
@@ -281,6 +308,63 @@
       return (Date.now() - updatedAt) <= 12000;
     }
 
+    function findProfileById(profileId) {
+      const id = Number(profileId || 0);
+      if (!id) return null;
+      return state.profiles.find((p) => p.id === id) || null;
+    }
+
+    function profileKindOf(profileId) {
+      return findProfileById(profileId)?.profile_kind || "device_telemetry";
+    }
+
+    function applyProfileKindVisibility(kind) {
+      const telemetryFields = document.querySelectorAll(".profile-field-telemetry");
+      const caseworkerFields = document.querySelectorAll(".profile-field-caseworker");
+      const isCaseWorker = kind === "case_worker";
+      telemetryFields.forEach((field) => field.classList.toggle("hidden", isCaseWorker));
+      caseworkerFields.forEach((field) => field.classList.toggle("hidden", !isCaseWorker));
+    }
+
+    function syncRunFormMode() {
+      const envSel = el("run-env");
+      const profileSel = el("run-profile");
+      const parentSel = el("run-parent");
+      const hint = el("run-parent-env-hint");
+      const isCaseWorker = profileKindOf(profileSel.value) === "case_worker";
+
+      parentSel.classList.toggle("hidden", !isCaseWorker);
+      parentSel.required = isCaseWorker;
+      envSel.classList.toggle("hidden", isCaseWorker);
+      envSel.disabled = isCaseWorker;
+
+      if (!isCaseWorker) {
+        hint.classList.add("hidden");
+        hint.textContent = "";
+        return;
+      }
+
+      const parentOption = parentSel.options[parentSel.selectedIndex] || null;
+      const parentEnvId = parentOption?.dataset?.envId || "";
+      const parentEnvName = parentOption?.dataset?.envName || "";
+      if (parentEnvId) {
+        envSel.value = parentEnvId;
+        hint.classList.remove("hidden");
+        hint.textContent = `Environment is derived from parent telemetry run: ${parentEnvName || `#${parentEnvId}`}.`;
+      } else {
+        hint.classList.remove("hidden");
+        hint.textContent = "Select a parent telemetry run to derive environment.";
+      }
+    }
+
+    function setRunDetailsMode(isCaseWorker) {
+      const casesPanel = el("run-cases-panel");
+      const eventsPanel = el("run-events-panel");
+      if (!casesPanel || !eventsPanel) return;
+      casesPanel.classList.toggle("hidden", isCaseWorker);
+      eventsPanel.querySelector("h2").textContent = isCaseWorker ? "Case Worker Events" : "Events";
+    }
+
     function setAuthenticatedView(isAuthed) {
       const sections = el("authed-sections");
       if (!sections) return;
@@ -301,6 +385,7 @@
       renderEnvs();
       renderProfiles();
       renderRuns();
+      el("metric-table").innerHTML = "";
       el("case-table").innerHTML = "";
       el("event-table").innerHTML = "";
       el("run-selected").textContent = "Select a run to inspect.";
@@ -465,22 +550,28 @@
         table.innerHTML = "<tr><td class='tiny'>No profiles yet.</td></tr>";
         return;
       }
-      table.innerHTML = "<tr><th>Name</th><th>Cases</th><th>Min/Max (mins)</th><th>Active %</th><th>Interval/Dur</th><th>Delay</th><th>Teardown</th><th></th></tr>" +
-        state.profiles.map((p) => `<tr>
+      table.innerHTML = "<tr><th>Name</th><th>Kind</th><th>Cases</th><th>Min/Max (mins)</th><th>Active %</th><th>Worker Cnt</th><th>APM/Wkr</th><th>Read %</th><th>Teardown</th><th></th></tr>" +
+        state.profiles.map((p) => {
+          const kind = p.profile_kind || "device_telemetry";
+          const isCaseWorker = kind === "case_worker";
+          return `<tr>
           <td>${p.name}</td>
-          <td>${p.device_count_initial}</td>
-          <td>${Math.round(p.update_min_ms / 60000)}/${Math.round(p.update_max_ms / 60000)}</td>
-          <td>${(p.activation_chance * 100).toFixed(1)}</td>
-          <td>${Math.round(p.active_interval_ms / 1000)}s / ${Math.round(p.active_duration_ms / 60000)}m</td>
-          <td>${p.case_creation_delay_ms}ms</td>
-          <td>${p.teardown_mode}</td>
+          <td>${kind}</td>
+          <td>${isCaseWorker ? "N/A" : (p.device_count_initial ?? "-")}</td>
+          <td>${isCaseWorker ? "N/A" : `${Math.round(p.update_min_ms / 60000)}/${Math.round(p.update_max_ms / 60000)}`}</td>
+          <td>${isCaseWorker ? "N/A" : (p.activation_chance * 100).toFixed(1)}</td>
+          <td>${isCaseWorker ? (p.caseworker_worker_count_initial ?? 20) : "N/A"}</td>
+          <td>${isCaseWorker ? Number(p.caseworker_actions_per_min_per_worker ?? 6).toFixed(1) : "N/A"}</td>
+          <td>${isCaseWorker ? Math.round((p.caseworker_read_ratio ?? 0.75) * 100) : "N/A"}</td>
+          <td>${isCaseWorker ? "N/A" : p.teardown_mode}</td>
           <td class='actions-col'>
             <div class='action-group'>
               <button data-edit-profile='${p.id}' class='secondary' type='button'>Edit</button>
               <button data-delete-profile='${p.id}' class='danger' type='button'>Delete</button>
             </div>
           </td>
-        </tr>`).join("");
+        </tr>`;
+        }).join("");
 
       table.querySelectorAll("button[data-edit-profile]").forEach((button) => {
         button.addEventListener("click", () => {
@@ -489,6 +580,7 @@
           if (!profile) return;
           el("profile-id").value = String(profile.id);
           el("profile-name").value = profile.name;
+          el("profile-kind").value = profile.profile_kind || "device_telemetry";
           el("profile-count").value = String(profile.device_count_initial);
           el("profile-min-mins").value = String(Math.round(profile.update_min_ms / 60000));
           el("profile-max-mins").value = String(Math.round(profile.update_max_ms / 60000));
@@ -497,6 +589,10 @@
           el("profile-active-dur-mins").value = String(Math.round(profile.active_duration_ms / 60000));
           el("profile-delay-ms").value = String(profile.case_creation_delay_ms);
           el("profile-teardown").value = profile.teardown_mode;
+          el("profile-worker-count").value = String(profile.caseworker_worker_count_initial ?? 20);
+          el("profile-actions-per-min").value = String(Number(profile.caseworker_actions_per_min_per_worker ?? 6).toFixed(1));
+          el("profile-caseworker-read-ratio").value = String(Math.round((profile.caseworker_read_ratio ?? 0.75) * 100));
+          applyProfileKindVisibility(profile.profile_kind || "device_telemetry");
           el("profile-submit").textContent = "Update Profile";
           el("profile-cancel").style.display = "inline-block";
           setMsg(`Editing profile ${profile.name}`, "status-warn");
@@ -527,6 +623,7 @@
     function resetProfileForm() {
       el("profile-form").reset();
       el("profile-id").value = "";
+      el("profile-kind").value = "device_telemetry";
       el("profile-min-mins").value = "30";
       el("profile-max-mins").value = "60";
       el("profile-active-ratio").value = "3";
@@ -534,6 +631,10 @@
       el("profile-active-dur-mins").value = "15";
       el("profile-delay-ms").value = "0";
       el("profile-teardown").value = "delete";
+      el("profile-worker-count").value = "20";
+      el("profile-actions-per-min").value = "6";
+      el("profile-caseworker-read-ratio").value = "75";
+      applyProfileKindVisibility("device_telemetry");
       el("profile-submit").textContent = "Add Profile";
       el("profile-cancel").style.display = "none";
     }
@@ -541,17 +642,30 @@
     function renderRunSelectors() {
       const envSel = el("run-env");
       const profileSel = el("run-profile");
+      const parentSel = el("run-parent");
       const currentEnv = envSel.value;
       const currentProfile = profileSel.value;
+      const currentParent = parentSel.value;
       envSel.innerHTML = state.envs.map((e) => `<option value='${e.id}'>${e.name}</option>`).join("");
       profileSel.innerHTML = "<option value='' disabled selected>Select profile</option>" +
         state.profiles.map((p) => `<option value='${p.id}'>${p.name}</option>`).join("");
+      const telemetryRuns = state.runs.filter((r) => (r.run_kind || "device_telemetry") === "device_telemetry" && r.status === "running");
+      parentSel.innerHTML = "<option value=''>Parent telemetry run (required for case worker)</option>" +
+        telemetryRuns.map((r) => {
+          const env = state.envs.find((e) => e.id === r.environment_id);
+          const envLabel = env ? env.name : `#${r.environment_id}`;
+          return `<option value='${r.id}' data-env-id='${r.environment_id}' data-env-name='${envLabel}'>Run ${r.id} (${envLabel})</option>`;
+        }).join("");
       if (currentEnv && state.envs.some((e) => String(e.id) === currentEnv)) {
         envSel.value = currentEnv;
       }
       if (currentProfile && state.profiles.some((p) => String(p.id) === currentProfile)) {
         profileSel.value = currentProfile;
       }
+      if (currentParent && telemetryRuns.some((r) => String(r.id) === currentParent)) {
+        parentSel.value = currentParent;
+      }
+      syncRunFormMode();
     }
 
     function renderRuns() {
@@ -560,19 +674,63 @@
         table.innerHTML = "<tr><td class='tiny'>No runs yet.</td></tr>";
         return;
       }
-      table.innerHTML = "<tr><th>ID</th><th>Status</th><th>Environment</th><th>Profile</th><th>Desired</th><th>Active</th><th>API</th><th>Fail</th><th>Avg (ms)</th><th>Last (ms)</th><th>Actions</th></tr>" +
-        state.runs.map((r) => {
+
+      const byId = new Map(state.runs.map((run) => [run.id, run]));
+      const childrenByParent = new Map();
+      const topLevelRuns = [];
+      for (const run of state.runs) {
+        const kind = run.run_kind || "device_telemetry";
+        if (kind === "case_worker" && run.parent_run_id) {
+          if (!childrenByParent.has(run.parent_run_id)) {
+            childrenByParent.set(run.parent_run_id, []);
+          }
+          childrenByParent.get(run.parent_run_id).push(run);
+        } else {
+          topLevelRuns.push(run);
+        }
+      }
+
+      const displayRows = [];
+      const attachedChildIds = new Set();
+      for (const parentRun of topLevelRuns) {
+        displayRows.push({ run: parentRun, isChild: false, parentRun: null, orphanChild: false });
+        const children = childrenByParent.get(parentRun.id) || [];
+        for (const childRun of children) {
+          attachedChildIds.add(childRun.id);
+          displayRows.push({ run: childRun, isChild: true, parentRun, orphanChild: false });
+        }
+      }
+
+      for (const run of state.runs) {
+        const kind = run.run_kind || "device_telemetry";
+        if (kind !== "case_worker" || !run.parent_run_id || attachedChildIds.has(run.id)) {
+          continue;
+        }
+        const parentRun = byId.get(run.parent_run_id) || null;
+        displayRows.push({ run, isChild: true, parentRun, orphanChild: true });
+      }
+
+      table.innerHTML = "<tr><th>ID</th><th>Kind</th><th>Status</th><th>Environment</th><th>Profile</th><th>Parent</th><th>Desired</th><th>Active</th><th>Tx Total</th><th>Tx TPS</th><th>API</th><th>Fail</th><th>Avg (ms)</th><th>Last (ms)</th><th>Actions</th></tr>" +
+        displayRows.map((row) => {
+          const r = row.run;
           const env = state.envs.find((e) => e.id === r.environment_id);
           const envLabel = env ? env.name : `#${r.environment_id}`;
           const profile = state.profiles.find((p) => p.id === r.profile_id);
           const profileLabel = profile ? profile.name : (r.profile_id ? `#${r.profile_id}` : "-");
-          return `<tr>
-          <td>${r.id}</td>
+          const parentLabel = row.orphanChild
+            ? `${r.parent_run_id || "-"} (missing)`
+            : (r.parent_run_id || "-");
+          return `<tr class='${row.isChild ? "run-child" : ""}'>
+          <td>${row.isChild ? `-> ${r.id}` : r.id}</td>
+          <td>${r.run_kind || "device_telemetry"}</td>
           <td><span class='status-chip'><span class='light ${runStatusColor(r.status)}' title='${runStatusColor(r.status).toUpperCase()} run state'></span><span class='badge'>${r.status}</span></span></td>
           <td>${envLabel}</td>
           <td>${profileLabel}</td>
+          <td>${parentLabel}</td>
           <td>${r.desired_case_count}</td>
           <td>${r.active_case_count}</td>
+          <td>${r.actions_total ?? 0}</td>
+          <td>${Number(r.actions_per_second_current || 0).toFixed(2)}</td>
           <td>${r.api_calls_total ?? 0}</td>
           <td>${r.api_calls_failed ?? 0}</td>
           <td>${Number(r.api_avg_response_ms || 0).toFixed(1)}</td>
@@ -626,27 +784,52 @@
       const out = el("run-selected");
       if (!state.selectedRunId) {
         out.textContent = "Select a run to inspect.";
+        setRunDetailsMode(false);
+        el("metric-table").innerHTML = "";
         el("case-table").innerHTML = "";
         el("event-table").innerHTML = "";
         return;
       }
-      out.textContent = `Run ${state.selectedRunId}`;
+      const selectedRun = state.runs.find((r) => r.id === state.selectedRunId) || null;
+      const selectedRunKind = selectedRun?.run_kind || "device_telemetry";
+      const selectedParentRunId = selectedRun?.parent_run_id || null;
+      out.textContent = selectedRunKind === "case_worker" && selectedParentRunId
+        ? `Run ${state.selectedRunId} (case_worker, parent telemetry run ${selectedParentRunId})`
+        : `Run ${state.selectedRunId}`;
       try {
-        const [cases, events] = await Promise.all([
-          api(`/api/sim/runs/${state.selectedRunId}/cases`),
-          api(`/api/sim/runs/${state.selectedRunId}/events`)
+        const caseRunId = selectedRunKind === "case_worker" && selectedParentRunId ? selectedParentRunId : state.selectedRunId;
+        const [cases, events, metrics] = await Promise.all([
+          api(`/api/sim/runs/${caseRunId}/cases`),
+          api(`/api/sim/runs/${state.selectedRunId}/events`),
+          api(`/api/sim/runs/${state.selectedRunId}/metrics`)
         ]);
-        el("case-table").innerHTML = "<tr><th>Case Reference</th><th>State</th><th>Alert</th><th>Prov</th><th>Tear</th><th>Last Error</th></tr>" +
-          cases.slice(0, 60).map((c) => {
-            const alertColor = caseAlertLight(c);
-            const recent = caseRecentlyUpdated(c);
-            const lightClass = recent ? `${alertColor} flash` : alertColor;
-            const lightTitle = recent
-              ? `${alertColor.toUpperCase()} flashing: status update sent recently`
-              : `${alertColor.toUpperCase()} alert state`;
-            const reference = c.case_reference ? `Case ${c.case_reference}` : "(pending server reference)";
-            return `<tr><td class='mono'>${reference}</td><td>${c.state}</td><td><span class='light ${lightClass}' title='${lightTitle}'></span></td><td>${c.provision_attempts || 0}</td><td>${c.teardown_attempts || 0}</td><td class='tiny'>${c.last_error || ""}</td></tr>`;
-          }).join("");
+        const isCaseWorkerMetrics = (metrics.run_kind || selectedRunKind) === "case_worker";
+        const statsRows = (metrics.action_stats || []).map((s) => `<tr><td>${s.action_type}</td><td>${s.success_count}</td><td>${s.failure_count}</td><td>${Number(s.avg_response_ms || 0).toFixed(1)}</td><td>${Number(s.last_response_ms || 0).toFixed(1)}</td></tr>`).join("");
+        if (isCaseWorkerMetrics) {
+          setRunDetailsMode(true);
+          el("metric-table").innerHTML = "<tr><th>Kind</th><th>Tx Total</th><th>Tx Fail</th><th>Tx TPS</th><th>Tx Avg TPS</th><th>API</th><th>API Fail</th></tr>" +
+            `<tr><td>${metrics.run_kind || "-"}</td><td>${metrics.actions_total ?? 0}</td><td>${metrics.actions_failed_total ?? 0}</td><td>${Number(metrics.actions_per_second_current || 0).toFixed(2)}</td><td>${Number(metrics.actions_per_second_avg || 0).toFixed(2)}</td><td>${metrics.api_calls_total ?? 0}</td><td>${metrics.api_calls_failed ?? 0}</td></tr>` +
+            "<tr><th>Action Type</th><th>Success</th><th>Failure</th><th>Avg ms</th><th>Last ms</th><th></th><th></th></tr>" +
+            (statsRows || "<tr><td class='tiny' colspan='7'>No action stats yet.</td></tr>");
+          el("case-table").innerHTML = "";
+        } else {
+          setRunDetailsMode(false);
+          el("metric-table").innerHTML = "<tr><th>Kind</th><th>Tx Total</th><th>Tx Fail</th><th>Tx TPS</th><th>Tx Avg TPS</th><th>API</th><th>API Fail</th></tr>" +
+            `<tr><td>${metrics.run_kind || "-"}</td><td>N/A</td><td>N/A</td><td>N/A</td><td>N/A</td><td>${metrics.api_calls_total ?? 0}</td><td>${metrics.api_calls_failed ?? 0}</td></tr>`;
+        }
+        if (!isCaseWorkerMetrics) {
+          el("case-table").innerHTML = "<tr><th>Case Reference</th><th>State</th><th>Alert</th><th>Prov</th><th>Tear</th><th>Last Error</th></tr>" +
+            cases.slice(0, 60).map((c) => {
+              const alertColor = caseAlertLight(c);
+              const recent = caseRecentlyUpdated(c);
+              const lightClass = recent ? `${alertColor} flash` : alertColor;
+              const lightTitle = recent
+                ? `${alertColor.toUpperCase()} flashing: status update sent recently`
+                : `${alertColor.toUpperCase()} alert state`;
+              const reference = c.case_reference ? `Case ${c.case_reference}` : "(pending server reference)";
+              return `<tr><td class='mono'>${reference}</td><td>${c.state}</td><td><span class='light ${lightClass}' title='${lightTitle}'></span></td><td>${c.provision_attempts || 0}</td><td>${c.teardown_attempts || 0}</td><td class='tiny'>${c.last_error || ""}</td></tr>`;
+            }).join("");
+        }
         el("event-table").innerHTML = "<tr><th>When</th><th>Level</th><th>Type</th><th>Message</th><th>Payload</th></tr>" +
           events.slice(0, 80).map((ev) => `<tr><td class='tiny'>${new Date(ev.created_at).toLocaleTimeString()}</td><td>${ev.level}</td><td>${ev.event_type}</td><td>${ev.message}</td><td class='tiny'>${ev.payload || ""}</td></tr>`).join("");
       } catch (err) {
@@ -677,7 +860,7 @@
     }
     async function refreshEnvs() { state.envs = await api("/api/sim/environments"); renderEnvs(); renderRunSelectors(); }
     async function refreshProfiles() { state.profiles = await api("/api/sim/profiles"); renderProfiles(); renderRunSelectors(); }
-    async function refreshRuns() { state.runs = await api("/api/sim/runs"); renderRuns(); }
+    async function refreshRuns() { state.runs = await api("/api/sim/runs"); renderRuns(); renderRunSelectors(); }
 
     async function refreshAll() {
       await refreshMe();
@@ -785,6 +968,7 @@
         const maxMins = Number(el("profile-max-mins").value || 60);
         const payload = {
           name: el("profile-name").value,
+          profile_kind: el("profile-kind").value,
           device_count_initial: Number(el("profile-count").value || 200),
           update_min_ms: Math.max(1, minMins) * 60 * 1000,
           update_max_ms: Math.max(Math.max(1, minMins), maxMins) * 60 * 1000,
@@ -792,7 +976,10 @@
           active_interval_ms: Math.max(1, Number(el("profile-active-int-sec").value || 30)) * 1000,
           active_duration_ms: Math.max(1, Number(el("profile-active-dur-mins").value || 15)) * 60 * 1000,
           case_creation_delay_ms: Math.max(0, Number(el("profile-delay-ms").value || 0)),
-          teardown_mode: el("profile-teardown").value
+          teardown_mode: el("profile-teardown").value,
+          caseworker_worker_count_initial: Math.max(1, Number(el("profile-worker-count").value || 20)),
+          caseworker_actions_per_min_per_worker: Math.max(0.1, Number(el("profile-actions-per-min").value || 6)),
+          caseworker_read_ratio: Math.max(0, Math.min(1, Number(el("profile-caseworker-read-ratio").value || 75) / 100))
         };
 
         if (editId) {
@@ -820,15 +1007,31 @@
       setMsg("Profile edit cancelled", "tiny");
     });
 
+    el("profile-kind").addEventListener("change", () => {
+      applyProfileKindVisibility(el("profile-kind").value || "device_telemetry");
+    });
+
+    el("run-profile").addEventListener("change", syncRunFormMode);
+    el("run-parent").addEventListener("change", syncRunFormMode);
+
     el("run-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       try {
-        const payload = {
-          environment_id: Number(el("run-env").value),
-        };
+        const payload = {};
         const profile = el("run-profile").value;
         if (!profile) throw new Error("Please select a profile");
         payload.profile_id = Number(profile);
+        const selectedProfile = state.profiles.find((p) => p.id === payload.profile_id);
+        if ((selectedProfile?.profile_kind || "device_telemetry") === "case_worker") {
+          const parentRunId = Number(el("run-parent").value || 0);
+          if (!parentRunId) throw new Error("Please select a parent telemetry run");
+          const parentRun = state.runs.find((r) => r.id === parentRunId);
+          if (!parentRun) throw new Error("Selected parent telemetry run no longer exists");
+          payload.environment_id = Number(parentRun.environment_id);
+          payload.parent_run_id = parentRunId;
+        } else {
+          payload.environment_id = Number(el("run-env").value);
+        }
         const run = await api("/api/sim/runs", { method: "POST", body: JSON.stringify(payload) });
         state.selectedRunId = run.id;
         setMsg(`Run ${run.id} started`, "status-ok");
@@ -847,6 +1050,9 @@
       } catch (_) {}
     }, 4000);
 
+    applyProfileKindVisibility("device_telemetry");
+    syncRunFormMode();
+    setRunDetailsMode(false);
     refreshAll();
   </script>
 </body>

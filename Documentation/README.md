@@ -15,6 +15,7 @@ This project now runs as a hosted simulator: Python backend + web console (`/con
 - Run lifecycle management (start, scale, stop, resume, delete)
 - Worker-driven provisioning with synthetic rich case data, photos, and teardown
 - Per-run API call and latency statistics
+- In design/implementation: case-worker child runs tied to telemetry parent runs with interlock and TPS metrics
 
 ## What It Does
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -49,6 +50,8 @@ async def lifespan(_: FastAPI):
     except OperationalError:
         # Database likely not migrated yet. Startup still allowed for health checks.
         pass
+    if settings.worker_timing_debug:
+        logging.getLogger("app.worker").setLevel(logging.INFO)
     worker.start()
     yield
     await worker.stop()
