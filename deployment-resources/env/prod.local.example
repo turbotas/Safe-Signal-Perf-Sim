@@ -1,0 +1,23 @@
+# Runtime image to deploy (update this each release)
+APP_IMAGE=safesignal-simulator:v0.1.0
+
+# Published host port for the simulator UI/API
+HOST_PORT=7999
+
+# Persistent DB location inside container
+SIM_DATABASE_URL=sqlite:///backend/data/simulator.db
+
+# Set per environment (required)
+SIM_SECRET_KEY=replace-with-long-random-secret
+
+# Security hardening for hosted TLS environments
+SIM_SESSION_COOKIE_SECURE=true
+
+# Seed admin account (change before first production use)
+SIM_SEED_ADMIN_EMAIL=admin@perfsim.local
+SIM_SEED_ADMIN_PASSWORD=ChangeMeNow123!
+
+# Optional worker timing diagnostics
+SIM_WORKER_TIMING_DEBUG=false
+SIM_WORKER_TIMING_SAMPLE_RATE=0.1
+SIM_WORKER_TIMING_SLOW_MS=2000

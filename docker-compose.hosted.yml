@@ -1,0 +1,21 @@
+services:
+  app:
+    image: ${APP_IMAGE:?APP_IMAGE is required}
+    container_name: ${COMPOSE_PROJECT_NAME:-safesignal-simulator}-app
+    restart: always
+    environment:
+      - SIM_DATABASE_URL=${SIM_DATABASE_URL:-sqlite:///backend/data/simulator.db}
+      - SIM_SECRET_KEY=${SIM_SECRET_KEY:?SIM_SECRET_KEY is required}
+      - SIM_SESSION_COOKIE_SECURE=${SIM_SESSION_COOKIE_SECURE:-true}
+      - SIM_SEED_ADMIN_EMAIL=${SIM_SEED_ADMIN_EMAIL:-admin@perfsim.local}
+      - SIM_SEED_ADMIN_PASSWORD=${SIM_SEED_ADMIN_PASSWORD:-ChangeMeNow123!}
+      - SIM_WORKER_TIMING_DEBUG=${SIM_WORKER_TIMING_DEBUG:-false}
+      - SIM_WORKER_TIMING_SAMPLE_RATE=${SIM_WORKER_TIMING_SAMPLE_RATE:-0.1}
+      - SIM_WORKER_TIMING_SLOW_MS=${SIM_WORKER_TIMING_SLOW_MS:-2000}
+    ports:
+      - "${HOST_PORT:-7999}:7999"
+    volumes:
+      - simulator_data:/app/backend/data
+
+volumes:
+  simulator_data:

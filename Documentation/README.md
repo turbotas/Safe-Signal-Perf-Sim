@@ -5,6 +5,7 @@ This project now runs as a hosted simulator: Python backend + web console (`/con
 ## Additional Documentation
 
 - [Hosted Simulator Build Spec (v1)](./Hosted%20Simulator%20Build%20Spec.md)
+- [Production Release Workflow](./Production%20Release%20Workflow.md)
 - [Backend Phase 1 Quick Start](../backend/README.md)
 
 ## Hosted Simulator Status (Current)

@@ -28,6 +28,16 @@ Run:
 
 This verifies app boot and health endpoint wiring.
 
+## Container release
+
+From repository root:
+
+- Build/export release image: `powershell -ExecutionPolicy Bypass -File scripts/release-images.ps1 -Bump patch`
+- Runtime compose file: `docker-compose.hosted.yml`
+- Runtime env template: `deployment-resources/env/prod.local.example`
+
+See full release steps in `Documentation/Production Release Workflow.md`.
+
 ## First endpoints to try
 
 - `http://localhost:7999/` (API info)
